@@ -559,7 +559,9 @@ def write_readme(app_dir: Path, version: str, with_ffmpeg: bool) -> None:
     ffmpeg_note = (
         "FFmpeg 已经随包带上了（在 ffmpeg 子目录里），不用管它。"
         if with_ffmpeg else
-        "**FFmpeg 需要你自己装一个**（免费的，见下面第 2 步）。")
+        "**FFmpeg**（免费）：首次启动会问你要不要自动下载（约 90 MB）；"
+        "也可以自己装，或在「设置 → 渲染环境 → 下载 FFmpeg」里下。"
+        "只输出 PNG 图片序列时不需要它。")
     text = f"""KomaFlow {version} —— 使用说明
 =====================================
 
@@ -599,6 +601,8 @@ def write_readme(app_dir: Path, version: str, with_ffmpeg: bool) -> None:
 ------------
 · 「渲染背景」默认**关**（出透明）；拖入舞台/背景后会自动变**开**（照背景渲）。
 · 点「开始渲染」时如果还没装配过，程序会先装配：导入 → 建物理约束 → 烘焙 → 存工程。
+· 动作和模型的骨骼匹配率低于 35% 时，装配阶段会停下并告诉你改法
+  （环境变量 KOMEFLOW_ALLOW_LOW_MATCH=1 可强制继续）。
 · 装配完会在出图目录留一份 `.blend`（含烘焙好的物理）。之后改渲染区间、重开程序，
   都会直接复用这份工程，**不会重跑物理**；你也可以打开它改完再渲。
 
@@ -615,7 +619,8 @@ def write_readme(app_dir: Path, version: str, with_ffmpeg: bool) -> None:
 许可
 ----
 随包的 `LICENSE_MMD渲染.txt` 是**第三方渲染器**（MIT）的许可声明，请保留。
-FFmpeg 是独立的第三方程序（LGPL/GPL），本包**未附带**，请自行安装并遵守其许可。
+FFmpeg 是独立的第三方程序（LGPL/GPL），本包**未附带**；
+程序可在你同意后按固定版本下载（会校验 SHA256），也可自行安装。
 
 English docs / 英文文档
 ----------------------

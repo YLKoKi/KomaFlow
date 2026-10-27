@@ -480,6 +480,9 @@ def run_project(
         result.total_frames = total_frames
         result.work_blend = Path(report.get("work_blend") or (work_dir / "work.blend"))
         _collect_report_notes(project, report, result, on_event)
+        # 骨骼对得上的部分太少时**在装配阶段就停**（V1.1.9 起；V1.2.0 从
+        # _collect_report_notes 里搬出来，警告归警告、中止归中止）。
+        _enforce_low_bone_match(report, on_event)
         if total_frames <= 0:
             raise KomaFlowError(
                 ErrorKind.ASSET_CORRUPT, detail="装配后没算出任何帧，检查动作文件")
@@ -1191,6 +1194,53 @@ def _prepare_and_assemble(
     return adapter, exe, report
 
 
+def _low_bone_match(report: dict) -> tuple[float, dict] | None:
+    """取「动作与模型骨骼匹配率」；没有这项数据、或动作骨骼太少时返回 None。
+
+    骨骼只有一两个（单点动作、纯表情、纯镜头）时，匹配率没有统计意义，
+    按 0% 处理会误伤 —— 所以和警告/中止的判断共用 ``>= 20`` 这条门槛。
+    """
+    coverage = report.get("bone_coverage") or {}
+    if coverage.get("coverage") is None:
+        return None
+    if (coverage.get("vmd_unique_bones") or 0) < 20:
+        return None
+    return float(coverage.get("coverage") or 0.0), coverage
+
+
+def _enforce_low_bone_match(report: dict, on_event=None) -> None:
+    """骨骼匹配率低于 :data:`LOW_MATCH_ABORT` 时，**装配阶段就中止**。
+
+    为什么单独一层：警告（``_collect_report_notes``）是"让用户知道"，
+    中止是"别再白渲"。两件事混在一个函数里，测试与调用方互相牵连
+    （V1.1.9 的"只警告"回归测试就被抛错打断了）。这里只判"止不止"。
+
+    想强行渲：设环境变量 ``KOMEFLOW_ALLOW_LOW_MATCH=1``（只告警不中止）。
+    """
+    low = _low_bone_match(report)
+    if low is None:
+        return
+    rate, coverage = low
+    if rate >= LOW_MATCH_ABORT:
+        return
+
+    if os.environ.get("KOMEFLOW_ALLOW_LOW_MATCH") == "1":
+        _emit(on_event, "log", level="warn",
+              message=(f"骨骼匹配只有 {rate:.0%}，已按 KOMEFLOW_ALLOW_LOW_MATCH=1 "
+                       "继续渲染；出片里大部分部位可能不会动。"))
+        return
+
+    raise KomaFlowError(
+        ErrorKind.ASSET_CORRUPT,
+        detail=(f"动作和模型的骨骼只对上了 {rate:.0%}"
+                f"（{coverage.get('matched')}/"
+                f"{coverage.get('vmd_unique_bones')}），"
+                "渲出来人物基本不会动，已在装配阶段中止。\n"
+                "改法：「角色模型」卡换成这个角色原本的 .pmx"
+                "（.blend 只放「舞台」卡当场景）。"),
+    )
+
+
 def _collect_report_notes(project: Project, report: dict, result: "RunResult", on_event) -> None:
     """把装配报告里该让用户知道的事，转成人话（K-6.3）。"""
     result.warnings.extend(project.scope_warnings())
@@ -1261,24 +1311,6 @@ def _collect_report_notes(project: Project, report: dict, result: "RunResult", o
                      "若上面的样例显示为乱码，多半是动作文件编码问题）")
             result.warnings.append(note)
             _emit(on_event, "log", level="warn", message=note)
-
-            # 🚨 低到这个程度就**不要再渲**：实测用户等了 50 分钟，
-            # 出来的片子里人物基本是立正（只动了 22% 的骨头）。
-            # 装配阶段已经知道结果，直接中止并说清怎么改，
-            # 比"渲完再让他自己发现"有价值得多。
-            # 想强行渲：设环境变量 KOMEFLOW_ALLOW_LOW_MATCH=1。
-            if rate < LOW_MATCH_ABORT:
-                import os as _os
-                if _os.environ.get("KOMEFLOW_ALLOW_LOW_MATCH") != "1":
-                    raise KomaFlowError(
-                        ErrorKind.ASSET_CORRUPT,
-                        detail=(f"动作和模型的骨骼只对上了 {rate:.0%}"
-                                f"（{coverage.get('matched')}/"
-                                f"{coverage.get('vmd_unique_bones')}），"
-                                "渲出来人物基本不会动，已在装配阶段中止。\n"
-                                "改法：「角色模型」卡换成这个角色原本的 .pmx"
-                                "（.blend 只放「舞台」卡当场景）。"),
-                    )
 
     textures = report.get("textures") or {}
     for item in textures.get("missing", []):
