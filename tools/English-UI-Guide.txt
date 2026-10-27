@@ -1,29 +1,28 @@
 KomaFlow — How to switch the UI to English
 ==========================================
 
-The interface is Chinese by default. An English language pack is included
-in this folder. Installing it takes about a minute. Nothing else changes:
-your projects, settings and renders are untouched.
+The interface is Chinese by default. The English language pack is **not bundled
+with the main package** — download `KomaFlow_语言包_英文_v1.1.zip` from the
+Releases page, then follow the steps below. Installing it takes about a minute.
+Nothing else changes: your projects, settings and renders are untouched.
 
 You can switch back to Chinese at any time.
 
 
-1. Method A (recommended): move the patch up one level
-------------------------------------------------------
-1. Open this folder. You will see a subfolder named  language-pack-en
-   ("English language pack").
-2. Inside it there is a folder named  locales  (containing en.json).
-3. Cut that whole  locales  folder and paste it next to KomaFlow.exe.
-4. The result must look like this:
+1. Method A (recommended): put the locales folder next to KomaFlow.exe
+---------------------------------------------------------------------
+1. Extract the language pack zip. You will see a folder named  locales
+   (containing en.json).
+2. Copy that whole  locales  folder and paste it next to KomaFlow.exe.
+3. The result must look like this:
 
        KomaFlow_V1.2.0-beta\          <- program folder
          KomaFlow.exe
          _internal\
          locales\                     <- must sit at this level
            en.json
-         language-pack-en\                  <- leftovers, safe to delete
 
-5. Double-click KomaFlow.exe. The UI is now in English.
+4. Double-click KomaFlow.exe. The UI is now in English.
 
 
 2. Method B: leave the program folder untouched
@@ -80,19 +79,19 @@ usage — you can add the missing ones yourself as described above.
 中文说明（给中文用户：怎么把界面换成英文）
 ==========================================================================
 
-默认是中文界面。本目录里已经放好了英文补丁，不用另外下载。
+默认是中文界面。英文语言包**不随主包附带**，需要先单独下载（Releases 页面的
+`KomaFlow_语言包_英文_v1.1.zip`）。
 
 方法一（推荐）：
-  1. 打开本目录，会看到「language-pack-en」文件夹
-  2. 进去，里面是 locales 文件夹（含 en.json）
-  3. 把整个 locales 文件夹剪切到 KomaFlow.exe 旁边
-  4. 最终结构：
+  1. 解压语言包，会看到一个 locales 文件夹（含 en.json）
+  2. 把整个 locales 文件夹复制到 KomaFlow.exe 旁边
+  3. 最终结构：
          KomaFlow_V1.2.0-beta\
            KomaFlow.exe
            _internal\
            locales\          <- 要它在这一层
              en.json
-  5. 重开程序，界面变英文
+  4. 重开程序，界面变英文
 
 方法二（不动程序目录）：
   按 Win + R 输入 %APPDATA%\KomaFlow → 新建 locales 文件夹

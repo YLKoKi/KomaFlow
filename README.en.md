@@ -15,8 +15,8 @@ and bakes physics, renders in segments, then muxes the result with FFmpeg.
 
 Windows desktop app (not a Blender add-on). **V1.2.0-beta** (beta).
 
-> 中文说明见 [README.md](README.md)。界面默认中文，可安装
-> `language-pack-en` 切换为英文（见 [English-UI-Guide](#english-ui)）。
+> 中文说明见 [README.md](README.md)。界面默认中文，可单独下载英文语言包
+> 切换为英文（见 [English-UI-Guide](#english-ui)）。
 
 ## What it does
 
@@ -99,11 +99,11 @@ python -m unittest discover -s tests -t .
 
 ## English UI
 
-The interface is Chinese by default. An optional English language pack ships in
-the release package:
+The interface is Chinese by default. The English language pack is **not bundled
+with the main package** — download `KomaFlow_语言包_英文_v1.1.zip` from Releases:
 
-1. Download/extract `KomaFlow_V1.2.0-beta.zip`
-2. Copy `language-pack-en/locales` next to `KomaFlow.exe`
+1. Extract the language pack zip (you get a `locales` folder with `en.json`)
+2. Copy that `locales` folder next to `KomaFlow.exe`
 3. Restart — the UI is English
 
 Remove the folder to return to Chinese. Details: `English-UI-Guide.txt`.

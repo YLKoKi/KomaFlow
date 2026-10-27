@@ -101,9 +101,9 @@ python -m unittest discover -s tests -t .
 
 ## 语言包（可选）
 
-界面默认中文。想要英文界面，安装可选的英文语言包即可：
+界面默认中文。英文语言包**不随主包附带**，单独下载安装即可：
 
-1. 下载 `KomaFlow_语言包_英文_v1.1.zip`
+1. 下载 `KomaFlow_语言包_英文_v1.1.zip`（Releases 页面单独附件）
 2. 解压后把 `locales` 文件夹放到 `KomaFlow.exe` 同级目录
 3. 重新打开程序 —— 界面变英文
 
