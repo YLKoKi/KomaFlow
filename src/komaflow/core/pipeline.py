@@ -831,6 +831,9 @@ def _refresh_frame_fields(report: dict, params) -> dict:
     return report
 
 
+#: 骨骼匹配率低于这个值就**中止渲染**（出片里人物几乎不动，没必要跑）。
+LOW_MATCH_ABORT = 0.35
+
 #: 装配（含物理烘焙）的总超时上限。正常只要十几分钟，这里是兜底。
 ASSEMBLE_TIMEOUT = 3600.0
 
@@ -1234,6 +1237,24 @@ def _collect_report_notes(project: Project, report: dict, result: "RunResult", o
                     "请改用这个角色原本的 .pmx。")
             result.warnings.append(note)
             _emit(on_event, "log", level="warn", message=note)
+
+            # 🚨 低到这个程度就**不要再渲**：实测用户等了 50 分钟，
+            # 出来的片子里人物基本是立正（只动了 22% 的骨头）。
+            # 装配阶段已经知道结果，直接中止并说清怎么改，
+            # 比"渲完再让他自己发现"有价值得多。
+            # 想强行渲：设环境变量 KOMEFLOW_ALLOW_LOW_MATCH=1。
+            if rate < LOW_MATCH_ABORT:
+                import os as _os
+                if _os.environ.get("KOMEFLOW_ALLOW_LOW_MATCH") != "1":
+                    raise KomaFlowError(
+                        ErrorKind.ASSET_CORRUPT,
+                        detail=(f"动作和模型的骨骼只对上了 {rate:.0%}"
+                                f"（{coverage.get('matched')}/"
+                                f"{coverage.get('vmd_unique_bones')}），"
+                                "渲出来人物基本不会动，已在装配阶段中止。\n"
+                                "改法：「角色模型」卡换成这个角色原本的 .pmx"
+                                "（.blend 只放「舞台」卡当场景）。"),
+                    )
 
     textures = report.get("textures") or {}
     for item in textures.get("missing", []):

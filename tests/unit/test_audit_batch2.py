@@ -325,5 +325,25 @@ class TestLookCoversDuplicateMaterials(unittest.TestCase):
         self.assertEqual(base("衣1_look"), "衣1")
 
 
+class TestLowBoneMatchAborts(unittest.TestCase):
+    """骨骼只对上 22% 时，装配阶段就要中止，别渲完 50 分钟才让用户自己发现。"""
+
+    def test_threshold_and_raise_present(self):
+        text = (ROOT / "src/komaflow/core/pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("LOW_MATCH_ABORT", text)
+        self.assertIn("KOMEFLOW_ALLOW_LOW_MATCH", text)
+        self.assertIn("渲出来人物基本不会动，已在装配阶段中止", text)
+
+    def test_threshold_is_below_normal_reuse_bar(self):
+        import importlib.util
+        from pathlib import Path as P
+        path = ROOT / "src/komaflow/core/pipeline.py"
+        src = path.read_text(encoding="utf-8")
+        m = [l for l in src.splitlines() if l.startswith("LOW_MATCH_ABORT")]
+        self.assertTrue(m, "没找到阈值定义")
+        value = float(m[0].split("=")[1].strip())
+        self.assertTrue(0.0 < value < 0.6, value)
+
+
 if __name__ == "__main__":
     unittest.main()
