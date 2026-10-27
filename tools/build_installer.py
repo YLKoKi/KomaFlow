@@ -54,6 +54,10 @@ BUILD = Path(_os.environ.get("KOMEFLOW_BUILD") or (ROOT / "build"))
 STAGE = ROOT / ".build_stage"
 APP_NAME = "KomaFlow"
 
+#: 合规文档（用户协议 / 免责声明）：PyInstaller 不会自动收它，必须显式拷到包根。
+#: 源在**仓库根**；V1.1.9 的发布包根级就有这一份，缺了就是合规文档缺失。
+LEGAL_DOC = "KomaFlow_使用声明与免责条款.docx"
+
 #: 隐私扫描的"针"。**这些是"一发出去就能被人反查到我"的东西** ——
 #: 每一条都是踩过或差点踩过的，别删：
 #:
@@ -719,10 +723,18 @@ def audit(app_dir: Path) -> dict:
                       "LICENSE-zlib.txt", "LICENSE-libffi.txt",
                       "NOTICE-OpenSSL.txt")),
         "误带Blender": has_blender,
+        # 合规文档：用户协议/免责声明必须随包（V1.1.9 起如此；缺了算体检不过）
+        "合规文档在包里": (app_dir / LEGAL_DOC).is_file(),
     }
 
 
 def make_zip(app_dir: Path, version: str) -> Path:
+    """把程序目录压成**根级** zip（解压后直接是 KomaFlow.exe，不再多一层文件夹）。
+
+    ⚠️ 以前写的是 ``arcname=KomaFlow/...``，用户解压会得到
+    ``KomaFlow\\KomaFlow.exe``，与 V1.1.9 发布包（根级）不一致；
+    发布流水线的 ``rezip_*.py`` 也要把这一层剥掉。这里直接对齐 V1.1.9。
+    """
     print("[4/5] 打压缩包 …")
     zip_path = DIST / f"{APP_NAME}_{version}.zip"
     zip_path.unlink(missing_ok=True)
@@ -730,7 +742,7 @@ def make_zip(app_dir: Path, version: str) -> Path:
                          compresslevel=6) as zf:
         for path in sorted(app_dir.rglob("*")):
             if path.is_file():
-                zf.write(path, Path(APP_NAME) / path.relative_to(app_dir))
+                zf.write(path, path.relative_to(app_dir).as_posix())
     print(f" -> {zip_path}（{zip_path.stat().st_size / 1024 / 1024:.1f} MB）")
     return zip_path
 
@@ -784,8 +796,35 @@ def tidy_root(app_dir: Path) -> None:
     else:
         print(f" !! 找不到许可原文目录：{lic_src}")
 
+    # 合规文档（用户协议 / 免责声明）：PyInstaller 的 datas 里没有它，
+    # 不显式拷就**整份不进包**（V1.1.9 发布包根级是有的）。
+    legal_src = ROOT / LEGAL_DOC
+    if legal_src.is_file():
+        shutil.copy2(legal_src, app_dir / LEGAL_DOC)   # 有改动就覆盖，别留旧文本
+        print(f" -> {LEGAL_DOC}")
+    else:
+        print(f" ★ 仓库根没有合规文档：{legal_src}（包里会缺这一份！）")
+
+
+def _ensure_console_safe() -> None:
+    """让 ``print`` 不会因控制台编码而崩（Windows GBK 下 ``✓`` 会抛 UnicodeEncodeError）。
+
+    只把**错误策略**改成 ``replace``：中文照常显示，编不出来的符号变 ``?``。
+    这样不设 ``PYTHONIOENCODING=utf-8`` 也能走完，退出码才可信
+    （实测：GBK 控制台首跑就是在这里崩的，打包明明成功却 exit 1）。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
 
 def main() -> int:
+    _ensure_console_safe()
     parser = argparse.ArgumentParser(description="打包 KomaFlow 安装包")
     parser.add_argument("--with-ffmpeg", action="store_true",
                         help="把便携 FFmpeg 一起打进去（开箱即用，但包大很多）")
@@ -830,10 +869,14 @@ def main() -> int:
              f"FFmpeg : {ffmpeg_note}",
              f"第三方许可 : {'在' if report['第三方许可在包里'] else '★ 缺了！'}",
              f"运行库许可 : {'在' if report['运行库许可原文在包里'] else '★ 缺了！'}",
+             f"合规文档 : {'在' if report['合规文档在包里'] else '★ 缺了！'}（{LEGAL_DOC}）",
              f"误带Blender: {'★★ 有！' if report['误带Blender'] else '没有（正确）'}",
-             f"剥注释 : {strip_info['剥了']} 个文件，源码 "
-             f"{strip_info['原KB']} KB → {strip_info['新KB']} KB"
-             f"（省 {strip_info['省KB']} KB）",
+             "剥注释 : " + (
+                 f"未启用（默认；包里 {strip_check['包内py文件']} 个 .py 与仓库逐字节一致，"
+                 "便于对照审计）" if not args.strip_comments else
+                 f"{strip_info['剥了']} 个文件，源码 "
+                 f"{strip_info['原KB']} KB → {strip_info['新KB']} KB"
+                 f"（省 {strip_info['省KB']} KB）"),
              "",
              "隐私检查（本机路径 / 用户名 / 开发笔记）："]
     if report["隐私命中"]:
@@ -850,7 +893,12 @@ def main() -> int:
         lines.append(" ✓ 没有带任何模型 / 贴图 / 成片，也没有 .pyc 编译垃圾")
 
     lines += ["", "剥注释是否真的进包了："]
-    if strip_check["还含注释的"]:
+    if not args.strip_comments:
+        # 默认就是**不剥**（V1.1.2 起：逐字节复制源码，发布包可对照仓库核对）。
+        # 以前这里还会打 ★「剥的没生效」，把"设计如此"误报成缺陷，纯噪音。
+        lines.append(" 未剥注释是**默认设计**（包里 .py 与仓库逐字节一致）；"
+                     "要剥用 --strip-comments")
+    elif strip_check["还含注释的"]:
         lines.append(" ★ 这些随包的 .py 里还有注释（说明剥的没生效）：")
         lines += [f" {name}" for name in strip_check["还含注释的"][:10]]
     elif strip_check["包内py文件"]:
@@ -858,7 +906,7 @@ def main() -> int:
                      f"该剥的都剥干净了")
     else:
         lines.append(" （包里没有 .py 数据文件；我们的模块编译进了 exe/zip 归档）")
-    if strip_check["按设计保留的"]:
+    if args.strip_comments and strip_check["按设计保留的"]:
         lines += [" 按设计保留注释的（第三方 / 约定）："] + [
             f" {name}" for name in strip_check["按设计保留的"][:6]]
     if not strip_check["素版存在"]:
@@ -877,7 +925,8 @@ def main() -> int:
 
     bad = (report["隐私命中"] or report["不该带的文件"]
            or report["编译垃圾目录"] or report["误带Blender"]
-           or not report["第三方许可在包里"])
+           or not report["第三方许可在包里"]
+           or not report["合规文档在包里"])
     if bad:
         print("\n★ 体检没过 —— 上面列出的问题必须先修掉再分发。")
         return 1
