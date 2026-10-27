@@ -45,7 +45,8 @@
 
 ### 证据
 
-- 单元测试：`Ran 359 tests — OK (skipped=3)`，0 fail / 0 error（2026-10-27 实跑，命令见 README）。
+- 单元测试：`Ran 363 tests — OK (skipped=3)`，0 fail / 0 error（2026-10-27 实跑，命令见 README）；
+  其中 4 项是多骨架的目标骨架选择回归（T-17：选最近导入 / 无记录回退 / 记录失效回退 / 无骨架）。
 - 真机 headless 冒烟：装配 + 出片通过 —— `build_report.json`（ok=true、3 帧）、
   3 张 PNG 落盘、`result.ok=True`、无 AttributeError（640×360、PNG 序列、3 帧）。
 - 能力包 / vendor：0 改动（`pkg-unchanged.diff`）。

@@ -87,7 +87,7 @@ src/komaflow/            application
   adapters/              Blender and FFmpeg drivers
   adapters/vendor/       MMD still renderer (MIT, see LICENSE / NOTICE)
   ui/                    Tk interface
-tests/                   359 unit tests (actually run; 3 skipped by design)
+tests/                   363 unit tests (actually run; 3 skipped by design)
 tools/                   PyInstaller spec, packaging, asset generators
 docs/                    architecture and usage notes (Chinese)
 ```
