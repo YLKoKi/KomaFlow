@@ -562,7 +562,7 @@ def write_readme(app_dir: Path, version: str, with_ffmpeg: bool) -> None:
         "**FFmpeg**（免费）：首次启动会问你要不要自动下载（约 90 MB）；"
         "也可以自己装，或在「设置 → 渲染环境 → 下载 FFmpeg」里下。"
         "只输出 PNG 图片序列时不需要它。")
-    text = f"""KomaFlow {version} —— 使用说明
+    text = f"""KomaFlow {version}（测试版） —— 使用说明
 =====================================
 
 这是干什么的
