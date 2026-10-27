@@ -5,10 +5,10 @@ for this project.
 
 | Component | License | Notes |
 | --- | --- | --- |
-| **MMD still-render script** (`_internal/komaflow/adapters/vendor/MMD渲染.py`) | **MIT** (full text in `LICENSE_MMD渲染.txt`) | Runs inside Blender to render the three-view "Model view" feature. Integrated as an unmodified copy from the standalone open-source project "MMD render toolkit" v2.0.1. |
+| **MMD still-render script** (`_internal/komaflow/adapters/vendor/MMD渲染.py`) | **MIT** (full text in `LICENSE_MMD渲染.txt`) | Runs inside Blender to render the three-view "Model view" feature. Integrated as an unmodified copy from the standalone open-source project "MMD render toolkit" **v2.1.0** (renderer 2.0.1). |
 | **Blender** | GPL (varies by version) | **Not bundled.** Called as an external process only. The user installs it. |
 | **mmd_tools** (Blender add-on) | GPL | **Not bundled.** Installed by the user inside Blender; used through Blender. |
-| **FFmpeg** | LGPL v2.1+ / GPL (depends on build) | **Not bundled.** Used for muxing/encoding; user installs it and keeps it on PATH. |
+| **FFmpeg** | LGPL v2.1+ / GPL (depends on build) | **Not bundled.** Used for muxing/encoding. With your consent the app can fetch a pinned build (9.0.2, SHA256-verified, https allow-list); or install it yourself and keep it on PATH. |
 | **Python / Tcl-Tk runtime** | PSF License / Tcl-Tk License | Bundled by PyInstaller as part of the frozen executable. |
 
 ## What this package does NOT contain

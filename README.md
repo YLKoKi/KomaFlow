@@ -5,8 +5,10 @@
 
 > **直接下载（Windows 程序包）** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
+> ⚠️ 当前是**测试版（beta）**：接口与默认值可能调整，GitHub Release 标为 pre-release。
+>
 > ⚠️ 请不要用绿色的 `Code → Download ZIP`：那是**源码**，里面没有 exe。
-> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.1.8.zip`，12.30 MB）。
+> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.0-beta.zip`，体积以 Releases 页面为准）。
 
 
 > English: [README.en.md](README.en.md)
@@ -14,7 +16,7 @@
 把 MMD 的**模型（.pmx）**和**动作（.vmd）**拖进来，调用你电脑上已装的 Blender
 完成「装配 → 物理预热 → 分段渲染 → 合并出片」，输出 MP4 或带透明通道的 MOV。
 
-Windows 独立程序（不是 Blender 插件）。**V1.1.8**。
+Windows 独立程序（不是 Blender 插件）。**V1.2.0-beta**（测试版）。
 
 ---
 
@@ -35,14 +37,14 @@ Windows 独立程序（不是 Blender 插件）。**V1.1.8**。
 | **Windows 10 / 11 64 位** | 只支持 Windows |
 | **Blender 5.0 – 5.99** | 实测 5.2.3 LTS；**不随包分发**，用你自己装的 |
 | **mmd_tools 扩展** | `bl_ext.blender_org.mmd_tools`；界面里可一键触发安装 |
-| **FFmpeg** | 不随包分发；可自行安装，或让程序首次启动时自动下载（见下方联网说明）|
+| **FFmpeg** | 不随包分发；可在你同意后按**固定版本下载**（校验 SHA256），也可自行安装（见下方联网说明）|
 | Python 3.10+ | 仅源码运行时需要；**零 pip 依赖** |
 
 ## 使用
 
 **方式一：发行包**
 
-1. 下载 Release 里的 `KomaFlow_V1.1.8.zip` 并解压
+1. 下载 Release 里的 `KomaFlow_V1.2.0-beta.zip` 并解压
 2. 双击 `KomaFlow.exe`
 3. 拖入 `.pmx` → 拖入 `.vmd` → 点「开始渲染」
 
@@ -62,13 +64,19 @@ python run.py
 - **工程可交付**：装配完成会在出图目录留一份 `.blend`（含烘焙好的物理；
   **贴图仍是指向模型目录的外链** —— 换机器打开时请一并带上模型与贴图目录），
   可以直接用 Blender 打开改材质 / 灯光 / 镜头，再回来渲。
-- **联网有三处，都会先弹窗问你，不点就不会联网**：
+- **骨骼对不上就不渲**：动作与模型的骨骼匹配率低于 **35%** 时，装配阶段直接中止，
+  不白渲整片；报错里会写怎么改（角色卡换回原始 `.pmx`）。
+  环境变量 `KOMEFLOW_ALLOW_LOW_MATCH=1` 可强制继续；35%~60% 只警告。
+- **联网只有两处，都会先问你；你不同意就不联网**：
   1. 界面里的「安装 mmd_tools」→ 让 Blender 去官方扩展库下载
-  2. **首次启动**会问要不要自动下载 FFmpeg（约 90 MB，装到 `%LOCALAPPDATA%\KomaFlow\ffmpeg`）
-  3. 选了透明 MOV 且本机没有 FFmpeg 时，点「开始渲染」会再问一次
-- ⚠️ 第 2、3 处的下载会**优先尝试第三方 GitHub 加速镜像**
-  （`ghfast.top` / `ghproxy.net` / `gh-proxy.com`），失败才回落到 GitHub 直连与 gyan.dev。
-  镜像只做透明转发；不想让流量经过第三方，就先自己装好 FFmpeg，程序不会再请求下载。
+  2. FFmpeg：首启会问一次；之后可在「设置 → 渲染环境 → 下载 FFmpeg」手动下；
+     选透明 MOV 但缺 FFmpeg 时，点「开始渲染」还会再问一次（三处共用一个下载器）
+- FFmpeg 下载的是**固定版本 9.0.2**（Windows 64 位 essentials 构建），
+  下完先算 SHA256，对不上就丢掉、换下一个来源；只允许 https 白名单域名。
+- 下载顺序：**固定版本 → GitHub 直连 → gyan.dev → 第三方加速镜像（最后兜底）**
+  （`ghfast.top` / `ghproxy.net` / `gh-proxy.com`）。
+  不想让流量经过第三方，就先自己装好 FFmpeg；程序检测到可用就不再下载。
+- 下载目录：`%LOCALAPPDATA%\KomaFlow\ffmpeg`（约 90 MB）。
 - **不改系统**：不写注册表、不装服务、不采集遥测。
 
 ## 目录
@@ -79,7 +87,7 @@ src/komaflow/                      程序本体
   adapters/                        调 Blender、调 FFmpeg
   adapters/vendor/                 MMD 静帧渲染器（MIT，见同目录 LICENSE / NOTICE）
   ui/                              Tk 界面
-tests/                             279 项单元测试
+tests/                             356 项单元测试（实跑通过，3 项按设计跳过）
 tools/                             打包（PyInstaller spec）、LOGO 生成、资源导出
 docs/                              架构说明、使用细节
 ```
@@ -111,6 +119,8 @@ python -m unittest discover -s tests -t .
 - **未配置 CI**：测试依赖 Tk，只在 Windows 上跑过。
 - **物理是近似解算**：`build_rig` 用非碰撞距离约束近似 MMD 软约束，个别模型可能穿插或偏摆。
 - **只在 Blender 5.x + mmd_tools 4.5.x 上验证**。
+- **FFmpeg 自动下载还没在真实网络上完整验证**：网络受限或被代理拦截时会失败，
+  失败不影响只出 PNG 序列；也可以先自己装好 FFmpeg。
 
 ## 合规与素材
 

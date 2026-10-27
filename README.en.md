@@ -2,16 +2,18 @@
 
 > **Download the app (Windows)** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
+> ⚠️ This is a **beta** build (pre-release): interfaces and defaults may change.
+>
 > Do not use the green `Code → Download ZIP` button — that is the **source code**
 > and contains no executable. The app is the asset on the **Releases** page
-> (`KomaFlow_V1.1.8.zip`, 12.30 MB).
+> (`KomaFlow_V1.2.0-beta.zip`; see the Releases page for size).
 
 
 Turn MMD models (`.pmx`) and motions (`.vmd`) into a finished video — by driving
 the **Blender you already have installed**. The app assembles the scene, builds
 and bakes physics, renders in segments, then muxes the result with FFmpeg.
 
-Windows desktop app (not a Blender add-on). **V1.1.8**.
+Windows desktop app (not a Blender add-on). **V1.2.0-beta** (beta).
 
 > 中文说明见 [README.md](README.md)。界面默认中文，可安装
 > `language-pack-en` 切换为英文（见 [English-UI-Guide](#english-ui)）。
@@ -33,14 +35,14 @@ Windows desktop app (not a Blender add-on). **V1.1.8**.
 | **Windows 10 / 11 (64-bit)** | Windows only |
 | **Blender 5.0 – 5.99** | Tested on 5.2.3 LTS. **Not bundled** — use your own install |
 | **mmd_tools add-on** | `bl_ext.blender_org.mmd_tools`; one-click install from the UI |
-| **FFmpeg** | Needed for muxing/encoding. **The app offers to download it on first launch** (~90 MB).<br>Not required for single-pass **MP4** or **PNG sequence**; **required for transparent MOV** |
+| **FFmpeg** | Needed for muxing/encoding. **Not bundled** — the app can fetch a **pinned build** (SHA256-verified) after you agree, or you can install your own.<br>Not required for single-pass **MP4** or **PNG sequence**; **required for transparent MOV** |
 | Python 3.10+ | Only for running from source. **No pip dependencies** |
 
 ## Quick start
 
 **Release build**
 
-1. Download `KomaFlow_V1.1.8.zip` from Releases and extract it
+1. Download `KomaFlow_V1.2.0-beta.zip` from Releases and extract it
 2. Run `KomaFlow.exe`
 3. Drop a `.pmx` into Character, a `.vmd` into Motion, click Start Render
 
@@ -62,13 +64,19 @@ Read `User-Guide-EN.txt` (inside the release package) for the full walkthrough.
 - **The project is reusable** — assembly saves `<name>.blend` next to your output,
   with physics already baked. Re-render, change the range, or edit it in Blender
   and render again without re-baking.
-- **Three network touch points — each asks first, nothing happens unless you agree**:
-  1. "install mmd_tools" → Blender fetches the add-on from the official repository
-  2. **First launch** offers to download FFmpeg (~90 MB, into `%LOCALAPPDATA%\KomaFlow\ffmpeg`)
-  3. Transparent MOV without FFmpeg asks again when you hit Start
-- ⚠️ Downloads in 2 and 3 **try third-party GitHub mirrors first**
-  (`ghfast.top` / `ghproxy.net` / `gh-proxy.com`), falling back to GitHub direct and gyan.dev.
-  Mirrors only relay the file; if you do not want that, install FFmpeg yourself and the app never asks.
+- **Low bone match aborts early**: if the motion's bones match less than **35%** of the
+  model's bones, assembly stops before rendering (no wasted full clip). Set
+  `KOMEFLOW_ALLOW_LOW_MATCH=1` to force it; 35%–60% only warns.
+- **Only two network actions, both ask first**:
+  1. "Install mmd_tools" → Blender fetches the add-on from the official repository
+  2. FFmpeg: asked once on first launch; also via Settings → Render environment →
+     Download FFmpeg; and asked again if you start a transparent MOV without FFmpeg
+     (all three share one downloader)
+- The download is a **pinned build 9.0.2** (Windows 64-bit essentials), SHA256-verified;
+  a mismatch is discarded and the next source is tried. https allow-list only.
+- Order: **pinned build → GitHub direct → gyan.dev → mirrors (last resort)**
+  (`ghfast.top` / `ghproxy.net` / `gh-proxy.com`). If you install FFmpeg yourself,
+  the app will not download it. Install dir: `%LOCALAPPDATA%\KomaFlow\ffmpeg` (~90 MB).
 - **No telemetry**, no accounts, no registry writes, no services.
 
 ## Layout
@@ -79,7 +87,7 @@ src/komaflow/            application
   adapters/              Blender and FFmpeg drivers
   adapters/vendor/       MMD still renderer (MIT, see LICENSE / NOTICE)
   ui/                    Tk interface
-tests/                   279 unit tests
+tests/                   356 unit tests (actually run; 3 skipped by design)
 tools/                   PyInstaller spec, packaging, asset generators
 docs/                    architecture and usage notes (Chinese)
 ```
@@ -94,7 +102,7 @@ python -m unittest discover -s tests -t .
 The interface is Chinese by default. An optional English language pack ships in
 the release package:
 
-1. Download/extract `KomaFlow_V1.1.8.zip`
+1. Download/extract `KomaFlow_V1.2.0-beta.zip`
 2. Copy `language-pack-en/locales` next to `KomaFlow.exe`
 3. Restart — the UI is English
 
@@ -107,6 +115,8 @@ Remove the folder to return to Chinese. Details: `English-UI-Guide.txt`.
 - Physics is an approximation: `build_rig` uses distance constraints instead of
   MMD's soft constraints, so some models may clip or jitter
 - Verified only on Blender 5.x with mmd_tools 4.5.x
+- The FFmpeg auto-download has **not** been verified end-to-end on a real network;
+  it may fail behind proxies/restricted networks. PNG sequences still work without it.
 
 ## Assets and licensing
 

@@ -1,5 +1,7 @@
-KomaFlow V1.1.0-beta — User Guide (English)
+KomaFlow V1.2.0-beta — User Guide (English)
 ===========================================
+
+Beta: interfaces and defaults may change.
 
 What it is
 ----------
@@ -14,8 +16,11 @@ Before you start
 ----------------
 1. Blender 5.x (required). Not bundled — use your own install.
    Download: https://www.blender.org/download/
-2. FFmpeg (required for encoding). Not bundled either. Install it and make sure
-   ffmpeg.exe is on PATH, or point to it with the KomaFlow_FFMPEG setting.
+2. FFmpeg (needed for encoding). Not bundled. Two ways:
+   - let the app fetch it: Settings > Render environment > "Download FFmpeg"
+     (a pinned build, SHA256-verified; asked once on first launch too)
+   - or install it yourself and put ffmpeg.exe on PATH, or point to it with
+     the KomaFlow_FFMPEG setting.
 3. mmd_tools add-on (required). In Blender: Edit > Preferences > Get Extensions,
    search "MMD Tools", install. Without it .pmx / .vmd cannot be read.
 
@@ -48,6 +53,9 @@ Defaults you should know
   - Look: taken from the capability pack (the project saved by "Model view").
   - Preroll: 30 frames of stillness so hair/skirt settle before the motion starts.
   - Segments: about 1000 frames each; finished segments are never re-rendered.
+  - Bone match: below 35% the assembly ABORTS instead of rendering a clip where
+    the character barely moves (set KOMEFLOW_ALLOW_LOW_MATCH=1 to force it).
+    35%-60% only warns.
 
 
 Assembly happens once
@@ -101,7 +109,9 @@ No alpha channel in the output
   ignored on purpose (the log says so).
 
 Encoding fails
-  FFmpeg is missing or not on PATH. Rendering finishes, but merging/encoding fails.
+  FFmpeg is missing. Either use Settings > Render environment > "Download FFmpeg",
+  or install FFmpeg yourself and put ffmpeg.exe on PATH. Rendering itself still
+  finishes without it; only merging/encoding fails.
 
 
 Assets and licensing
