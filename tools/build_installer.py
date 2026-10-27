@@ -535,7 +535,7 @@ def add_english_docs(app_dir: Path) -> list[str]:
 
 
 def add_language_pack(app_dir: Path) -> str:
-    """只放**英文切换教程**；语言包本体不再随主包附带（V1.2.0-beta 起，T-12）。
+    """只放**英文切换教程**；语言包本体不再随主包附带（V1.2.0 起，T-12）。
 
     ⚠️ 语言包单独发 `KomaFlow_语言包_英文_v1.1.zip`，用户按教程把 ``locales/``
     放到 exe 同级（或 ``%APPDATA%\\KomaFlow\\locales``）。
@@ -560,7 +560,7 @@ def write_readme(app_dir: Path, version: str, with_ffmpeg: bool) -> None:
         "**FFmpeg**（免费）：首次启动会问你要不要自动下载（约 90 MB）；"
         "也可以自己装，或在「设置 → 渲染环境 → 下载 FFmpeg」里下。"
         "只输出 PNG 图片序列时不需要它。")
-    text = f"""KomaFlow {version}（测试版） —— 使用说明
+    text = f"""KomaFlow {version} —— 使用说明
 =====================================
 
 这是干什么的

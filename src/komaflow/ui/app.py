@@ -695,8 +695,7 @@ class KomaFlowApp:
         version.pack(side="left", padx=(T.S(14), T.S(8)))
         self.lbl_version = version
         tip.attach(version,
-                   f"当前版本 {APP_VERSION}。\n"
-                   "beta 表示还在测：主流程能用，个别功能还没全通。")
+                   f"当前版本 {APP_VERSION}。")
 
         # 重新 pack 一次 LOGO，把它排到版本号**右边**。
         # Tk 的 pack 是"先来先占位"，所以要重排就得 forget 再 pack。
