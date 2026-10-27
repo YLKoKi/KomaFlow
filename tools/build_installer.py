@@ -512,10 +512,6 @@ def add_portable_ffmpeg(app_dir: Path) -> str:
     return f"（已放 {', '.join(copied[:2])}，共 {size_mb:.0f} MB）"
 
 
-#: 英文语言包的源目录（与打包脚本同仓库：<仓库>/语言包/英文）
-LANG_PACK_SRC = SRC.parent.parent / "语言包" / "english"
-
-
 #: 英文切换教程（单独文件，避免在代码里写长文本）
 TUTORIAL_FILE = Path(__file__).resolve().parent / "English-UI-Guide.txt"
 
@@ -539,22 +535,20 @@ def add_english_docs(app_dir: Path) -> list[str]:
 
 
 def add_language_pack(app_dir: Path) -> str:
-    """把英文语言包与教程放进发布目录（默认中文，用户自选）。"""
+    """只放**英文切换教程**；语言包本体不再随主包附带（V1.2.0-beta 起，T-12）。
+
+    ⚠️ 语言包单独发 `KomaFlow_语言包_英文_v1.1.zip`，用户按教程把 ``locales/``
+    放到 exe 同级（或 ``%APPDATA%\\KomaFlow\\locales``）。
+    以前这里还会从 ``<工作区>/语言包/english`` 拷一份 ``language-pack-en/``，
+    但那份源目录**不在仓库里**，从 git worktree 打包时必然找不到 ——
+    于是包里没有、指南却说"随包"，QA 的 P1 就是这么来的。
+    现在口径统一为"另下载"，这里不再拷任何语言包文件。
+    """
     if TUTORIAL_FILE.is_file():
         (app_dir / "English-UI-Guide.txt").write_bytes(TUTORIAL_FILE.read_bytes())
     else:
         (app_dir / "English-UI-Guide.txt").write_text("(guide file missing)", encoding="utf-8")
-    if not LANG_PACK_SRC.is_dir():
-        return "教程已写；语言包源目录不存在（跳过补丁文件）"
-    dest = app_dir / "language-pack-en"
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in LANG_PACK_SRC.rglob("*"):
-        if not item.is_file():
-            continue
-        target = dest / item.relative_to(LANG_PACK_SRC)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(item.read_bytes())
-    return f"教程 + 语言包已放入（{dest.name}）"
+    return "教程已写；语言包不随主包附带（单独下载）"
 
 
 
@@ -630,7 +624,7 @@ English docs / 英文文档
 ----------------------
 · User-Guide-EN.txt          — full user guide in English
 · English-UI-Guide.txt       — how to switch the UI to English
-                           （按它装 language-pack-en，界面变英文；不装仍是中文）
+                           （英文语言包需单独下载，按它装好 locales 后界面变英文；不装仍是中文）
 · THIRD-PARTY-NOTICES-EN.md  — third-party notices in English
 """
     (app_dir / "使用说明.txt").write_text(text, encoding="utf-8")
