@@ -620,7 +620,11 @@ def run_project(
             result.ok = True
             _emit(on_event, "done", output=str(final), frames=exported,
                   duration=0.0, alpha_output="")
-            return
+            # ⚠️ 必须是 ``return result``：原来写的是裸 ``return``，
+            # 于是「只出 PNG 图片序列」这条路**成功后返回 None**，
+            # 调用方（界面）一取 ``result.ok`` 就 AttributeError ——
+            # 片其实已经渲好了，却报成失败。P0 冒烟时抓到。
+            return result
 
         if frames_only:
             # 要编码的段清单：渲过的 + 判为已完成跳过的，都在 ``plan.segments`` 里。
@@ -677,7 +681,7 @@ def run_project(
         _emit(on_event, "stage", stage="verify_final", message=STAGES[4][1])
         if frames_only and alpha_codec == "png":
             # 上面 _export_png_frames 已按张数核对过，这里不再 probe
-            return
+            return result
         try:
             info_final = probe_video(final, ffmpeg, cancel=cancel)
         except KomaFlowError:

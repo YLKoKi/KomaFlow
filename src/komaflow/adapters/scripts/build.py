@@ -45,6 +45,7 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 
 import bpy
 
@@ -1768,11 +1769,16 @@ def _motion_span() -> dict | None:
 
 
 def _write(spec: dict, report: dict) -> None:
-    target = spec.get("report")
-    if not target:
+    raw = spec.get("report")
+    if not raw:
         print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
         return
-    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    # 🚨 spec 是从 JSON 读进来的，``report`` 是 **str**。
+    # V1.1.3 的 C11（原子写）直接对它调 ``.with_suffix()`` —— 那是 Path 的方法，
+    # 于是**每次真装配都在这里 AttributeError**，报告写不出来、主线全挂。
+    # 单元测试没覆盖到，因为 build.py 是 Blender 里执行的脚本，没人真跑装配。
+    target = Path(raw)
+    os.makedirs(os.path.dirname(str(target)) or ".", exist_ok=True)
     # C11：先写 .tmp 再替换 —— 渲染中途被杀不会留下截断的 report，
     # 也就不会让下次复用时 json.loads 抛错（那会整次渲染失败）。
     tmp = target.with_suffix(target.suffix + ".tmp")
