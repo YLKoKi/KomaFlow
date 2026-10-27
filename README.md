@@ -8,7 +8,7 @@
 > ⚠️ 当前是**测试版（beta）**：接口与默认值可能调整，GitHub Release 标为 pre-release。
 >
 > ⚠️ 请不要用绿色的 `Code → Download ZIP`：那是**源码**，里面没有 exe。
-> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.0-beta.zip`，12.30 MB）。
+> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.0-beta.zip`，**约 12.3 MB**）。
 
 
 > English: [README.en.md](README.en.md)
