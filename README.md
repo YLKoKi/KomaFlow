@@ -87,7 +87,7 @@ src/komaflow/                      程序本体
   adapters/                        调 Blender、调 FFmpeg
   adapters/vendor/                 MMD 静帧渲染器（MIT，见同目录 LICENSE / NOTICE）
   ui/                              Tk 界面
-tests/                             356 项单元测试（实跑通过，3 项按设计跳过）
+tests/                             359 项单元测试（实跑通过，3 项按设计跳过）
 tools/                             打包（PyInstaller spec）、LOGO 生成、资源导出
 docs/                              架构说明、使用细节
 ```
