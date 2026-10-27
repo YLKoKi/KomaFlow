@@ -138,6 +138,33 @@ def _mmd_root_object():
     return None
 
 
+#: 最近一次 ``_import_model`` 成功导入的骨架名。见 :func:`_target_armature`。
+_recent_armature: str | None = None
+
+
+def _target_armature():
+    """挑出动作与物理应该作用的骨架。
+
+    ⚠️ **不能无脑取 ``armatures[0]``。** route B 打开用户工程、或场景里
+    已经有别的骨架时，``bpy.data.objects`` 里排在第一位的是**先入场**
+    的那套 —— 动作挂到它上面，刚导入的模型一根关键帧都没有，
+    表现就是"动作没导入、人物全程静止"（用户工单实测）。
+
+    规则：``_import_model`` 每次成功导入后把新出现的骨架名记进
+    ``_recent_armature``；有记录就用它，没有（纯 route B）才回退第一套。
+    """
+    arms = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+    if not arms:
+        return None
+    if len(arms) > 1:
+        _log(f"场景中有多套骨架（{len(arms)} 套），动作与物理将作用于最近导入模型的骨架")
+    if _recent_armature:
+        chosen = bpy.data.objects.get(_recent_armature)
+        if chosen is not None and chosen.type == "ARMATURE":
+            return chosen
+    return arms[0]
+
+
 def _build_rig() -> dict:
     """把 MMD 的骨骼 / 刚体 / 约束真正"搭起来"（``mmd_tools.build_rig``）。
 
@@ -161,10 +188,9 @@ def _build_rig() -> dict:
     ⚠️ 副作用：这 571 个约束会把骨骼"按"在初始姿势上，所以**之后必须烘焙**，
        否则角色比不建约束还要僵（实测烘焙前头发位移 0.0cm）。
     """
-    armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-    if not armatures:
+    arm = _target_armature()
+    if arm is None:
         return {"skipped": "场景里没有骨架"}
-    arm = armatures[0]
 
     # 根对象 = 带 mmd_root 的那个（一般是骨架的父级空物体）。
     # ⚠️ 必须选它：选骨架调 build_rig 会 poll() failed。
@@ -282,12 +308,12 @@ def _bake_physics(spec: dict) -> dict:
         return {"skipped": "没 build 过，拒绝烘焙",
                 "is_built": False, "reason": "physics-not-built"}
 
-    armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-    if armatures:
+    arm = _target_armature()
+    if arm is not None:
         for obj in bpy.context.selected_objects:
             obj.select_set(False)
-        armatures[0].select_set(True)
-        bpy.context.view_layer.objects.active = armatures[0]
+        arm.select_set(True)
+        bpy.context.view_layer.objects.active = arm
 
     scene.frame_set(0) # ← 用户强调的那一步
 
@@ -536,6 +562,11 @@ def _import_model(path: str, label: str, *,
     用户看到"某个素材读不出来"根本不知道是哪个（用户截图来问过）。
     ``raise ... from exc`` 保留原始堆栈，排查不受影响。
     """
+    # 记录导入前的骨架名集合 —— 导入后新出现的那个就是本模型的骨架，
+    # 之后动作与物理都作用在它身上（见 :func:`_target_armature`；
+    # route B / 多模型场景下对象列表顺序不可靠，不能靠 armatures[0]）。
+    armature_names_before = {o.name for o in bpy.data.objects
+                             if o.type == "ARMATURE"}
     try:
         result = bpy.ops.mmd_tools.import_model(
             filepath=path,
@@ -547,6 +578,11 @@ def _import_model(path: str, label: str, *,
     except Exception as exc: # noqa: BLE001 - 要原样往上报，只是加文件名
         name = os.path.basename(path)
         raise RuntimeError(f"{label} 文件「{name}」读不出来：{exc}") from exc
+    global _recent_armature
+    new_armatures = [o.name for o in bpy.data.objects
+                     if o.type == "ARMATURE" and o.name not in armature_names_before]
+    if new_armatures:
+        _recent_armature = new_armatures[-1]
     _log(f"import {label}: {result}")
     return {"result": str(result), "physics": bool(physics)}
 
@@ -579,8 +615,8 @@ def _import_motion(path: str, preroll: int, label: str, *,
        这是它留给用户自己调的地方，不是 bug。
     ⚠️ 顺序有意义：后导入的在**上层**，所以会盖住同名骨骼。
     """
-    armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-    if not armatures:
+    arm = _target_armature()
+    if arm is None:
         return {"error": "场景里没有 armature，无法挂动作"}
 
     # ⚠️ **必须连网格一起选中**，否则表情（morph）永远导不进来。
@@ -595,11 +631,11 @@ def _import_motion(path: str, preroll: int, label: str, *,
     # 加上网格后 ``face_facial`` 动作能正常建出来，形态键按帧变化（已验证）。
     for obj in bpy.context.selected_objects:
         obj.select_set(False)
-    armatures[0].select_set(True)
+    arm.select_set(True)
     for obj in bpy.data.objects:
         if obj.type == "MESH" and getattr(obj.data, "shape_keys", None):
             obj.select_set(True)
-    bpy.context.view_layer.objects.active = armatures[0]
+    bpy.context.view_layer.objects.active = arm
 
     # ── K-1.7 的实现式：场景帧 = VMD帧 + N ──
     #
@@ -642,10 +678,10 @@ def _enable_nla_layers() -> dict:
        不设成 1 的话，action 建了、轨道也有了，**姿势却一点没变** ——
        表现为"加了第二个动作，画面跟只有一个时一模一样"。
     """
-    armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-    if not armatures:
+    arm = _target_armature()
+    if arm is None:
         return {"nla": "没有骨架"}
-    anim = armatures[0].animation_data
+    anim = arm.animation_data
     if anim is None:
         return {"nla": "没有动画数据"}
     tuned = 0

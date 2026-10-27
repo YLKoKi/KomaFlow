@@ -3498,7 +3498,8 @@ class KomaFlowApp:
             self.root, self.settings, on_apply=self._apply_settings,
             on_rediscover=self.on_discover,
             on_blender_pick=self.choose_blender,
-            on_blender_manual=self._pick_blender_manual)
+            on_blender_manual=self._pick_blender_manual,
+            on_ffmpeg_download=self._download_ffmpeg_async)
         picker = getattr(window, "env_picker", None)
         if picker is None:
             return
@@ -3927,7 +3928,7 @@ class KomaFlowApp:
         needs = project.effective_transparent() and project.alpha_codec_name() != "png"
         if not needs:
             return True
-        from komaflow.media.ffmpeg import find_ffmpeg, ENV_FFMPEG
+        from komaflow.media.ffmpeg import find_ffmpeg
         try:
             find_ffmpeg()
             return True

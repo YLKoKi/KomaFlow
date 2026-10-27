@@ -225,6 +225,11 @@ NEON_CYAN = (92, 240, 228)
 NEON_MAGENTA = (246, 140, 232)
 NEON_MINT = (176, 250, 240)
 
+
+def _lerp(a, b, t):
+    """两个 RGB 颜色按 ``t`` 线性插值，返回同长度的整数元组。"""
+    return tuple(int(round(ba + (bb - ba) * t)) for ba, bb in zip(a, b))
+
 #: 狐狸头的轮廓（比例坐标，``x``/``y`` 都在 0~1）。
 #:
 #: ⚠️ 这段造型返工过好几轮，教训值得留着：

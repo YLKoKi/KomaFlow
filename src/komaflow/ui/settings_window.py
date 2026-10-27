@@ -40,7 +40,7 @@ class SettingsWindow:
 
     def __init__(self, parent: tk.Misc, settings, on_apply=None, *,
                  on_rediscover=None, on_blender_pick=None,
-                 on_blender_manual=None) -> None:
+                 on_blender_manual=None, on_ffmpeg_download=None) -> None:
         self.parent = parent
         self.settings = settings
         self.on_apply = on_apply
@@ -48,6 +48,9 @@ class SettingsWindow:
         self.on_rediscover = on_rediscover or (lambda: None)
         self.on_blender_pick = on_blender_pick or (lambda probed, i: None)
         self.on_blender_manual = on_blender_manual or (lambda: None)
+        # FFmpeg 下载回调：主程序里有现成的后台下载流程（带日志与就绪提示），
+        # 设置窗口只负责提供入口，不自己实现下载。
+        self.on_ffmpeg_download = on_ffmpeg_download or (lambda: None)
 
         self.window = tk.Toplevel(parent)
         self.window.title("设置")
@@ -178,6 +181,33 @@ class SettingsWindow:
             wraplength=520)
         self.env_picker.frame.pack(fill="x")
 
+        # ── FFmpeg（渲染环境卡片的下半段）──
+        # 首启弹窗承诺过"去设置里手动下载"，这里就是那个入口：
+        # 缺 FFmpeg 时给按钮，点了走主程序的后台下载（不卡界面）。
+        from ..media.ffmpeg import find_ffmpeg
+
+        ff_row = tk.Frame(env_card, bg=T.CARD)
+        ff_row.pack(fill="x", padx=T.S(12), pady=(0, T.S(12)))
+        try:
+            find_ffmpeg()
+            ff_state, ff_ready = "FFmpeg：已就绪", True
+        except Exception:      # noqa: BLE001 - 找不到才需要入口
+            ff_state, ff_ready = "FFmpeg：未找到 —— 编码透明 MOV / 拼接分段需要它", False
+        ff_label = tk.Label(ff_row, text=ff_state, bg=T.CARD,
+                            fg=T.TEXT_SUB if ff_ready else T.TEXT,
+                            font=T.pick_font(9), anchor="w")
+        ff_label.pack(side="left")
+        tip_module.attach(
+            ff_label,
+            "FFmpeg 不随本软件分发。\n"
+            "渲染 MP4/MOV 的编码与分段拼接都要用它；\n"
+            "只输出 PNG 图片序列则不需要。")
+        if not ff_ready:
+            T.FlatButton(ff_row, "下载 FFmpeg", self.on_ffmpeg_download,
+                         width=T.S(96), height=T.S(28), bg=T.CARD, fill="#FFFFFF",
+                         hover=T.BEIGE_SOFT, fg=T.NAVY, outline=T.BORDER,
+                         font=T.pick_font(9)).pack(side="left", padx=(T.S(10), 0))
+
         # ── 底部按钮 ──
         foot = tk.Frame(body, bg=T.CREAM)
         foot.pack(fill="x", pady=(T.S(14), 0))
@@ -252,7 +282,7 @@ class SettingsWindow:
 
 def open_settings(parent: tk.Misc, settings, on_apply=None, *,
                   on_rediscover=None, on_blender_pick=None,
-                  on_blender_manual=None) -> SettingsWindow:
+                  on_blender_manual=None, on_ffmpeg_download=None) -> SettingsWindow:
     """打开设置窗口；已经开着就把它抬到前面，不重复开。
 
     返回值**总是那个窗口对象**（不管是新开的还是抬起来的），
@@ -273,6 +303,7 @@ def open_settings(parent: tk.Misc, settings, on_apply=None, *,
     window = SettingsWindow(parent, settings, on_apply=on_apply,
                             on_rediscover=on_rediscover,
                             on_blender_pick=on_blender_pick,
-                            on_blender_manual=on_blender_manual)
+                            on_blender_manual=on_blender_manual,
+                            on_ffmpeg_download=on_ffmpeg_download)
     SettingsWindow._instance = window
     return window

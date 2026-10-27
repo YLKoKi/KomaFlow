@@ -394,6 +394,14 @@ class Project:
                 f"没有镜头文件 —— 将使用自动正面机位（景别：{p.framing}）。"
                 "这是冻结范围内的备用方案，不是错误。"
             )
+        # route=blend 时 validate 不强制动作（有的用户就是只渲静止场景/镜头动画），
+        # 但"以为挂了动作、结果渲出来不动"是最常见的误用反馈 —— 不拦，必须说透。
+        is_blend_route = (self.inputs.route == "blend" or bool(self.inputs.blend))
+        if is_blend_route and not self.inputs.all_motions():
+            warnings.append(
+                "没有放置动作文件（.vmd）—— 本次渲染的角色将保持打开时的姿势，"
+                "不会动。若这是本意可忽略；想要角色动起来，请把动作 .vmd 拖进动作卡。"
+            )
         return warnings
 
     # ------------------------------------------------------------ 序列化

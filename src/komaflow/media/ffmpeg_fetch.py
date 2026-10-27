@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -31,10 +33,36 @@ _MIRROR_PREFIXES = [
 _GH_ASSET = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
              "ffmpeg-master-latest-win64-gpl.zip")
 
-#: 备用：gyan.dev 的 essentials 构建（直连，无需镜像）
+#: 备用：gyan.dev 的滚动 essentials 构建（直连，无需镜像）
 _EXTRA_SOURCES = [
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
 ]
+
+#: 首选：**钉死的版本化构建**。URL 与 SHA256 一一对应
+#: （哈希取自 GitHub Release 资产自带的官方 digest）。
+#: 换新版本时更新这里即可；哈希对不上的下载会被直接丢弃并尝试下一个来源。
+_PINNED_SOURCES: list[tuple[str, str]] = [
+    ("https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/"
+     "ffmpeg-9.0.2-essentials_build.zip",
+     "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"),
+]
+
+_SHA256_BY_URL = dict(_PINNED_SOURCES)
+
+#: 允许发起下载的域名白名单（https only）。下载地址全部来自上方的代码内
+#: 常量表，不接任何外部输入；这里再设一道边界，防止未来改动时
+#: 意外引入不可信主机。
+_ALLOWED_HOSTS = {
+    "github.com", "objects.githubusercontent.com", "www.gyan.dev",
+    "ghfast.top", "ghproxy.net", "gh-proxy.com",
+}
+
+
+def _check_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_HOSTS:
+        raise RuntimeError(f"下载地址不在允许列表内：{url}")
+    return url
 
 
 def install_dir() -> Path:
@@ -43,9 +71,10 @@ def install_dir() -> Path:
 
 
 def sources() -> list[str]:
-    """按顺序尝试的下载地址（B2：直连在前，镜像在后）。"""
-    direct = _DIRECT + _GH_ASSET
-    urls = [direct, *_EXTRA_SOURCES]
+    """按顺序尝试的下载地址：钉死版本在前，直连次之，镜像最后兜底。"""
+    urls = [url for url, _sha in _PINNED_SOURCES]
+    urls.append(_DIRECT + _GH_ASSET)
+    urls += [*_EXTRA_SOURCES]
     urls += [prefix + _GH_ASSET for prefix in _MIRROR_PREFIXES]
     seen: set[str] = set()
     ordered: list[str] = []
@@ -58,6 +87,7 @@ def sources() -> list[str]:
 
 def _download(url: str, target: Path,
               on_progress: Callable[[str, int, int], None] | None = None) -> None:
+    _check_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": "KomaFlow"})
     with urllib.request.urlopen(request, timeout=60) as response:
         total = int(response.headers.get("Content-Length") or 0)
@@ -96,6 +126,14 @@ def _extract(zip_path: Path, dest: Path) -> list[Path]:
     return found
 
 
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def fetch(on_progress: Callable[[str, int, int], None] | None = None,
           on_note: Callable[[str], None] | None = None) -> Path:
     """下载并解压 FFmpeg，返回安装目录。全部源都失败时抛 :class:`RuntimeError`。"""
@@ -109,6 +147,13 @@ def fetch(on_progress: Callable[[str, int, int], None] | None = None,
             with tempfile.TemporaryDirectory() as tmp:
                 zip_path = Path(tmp) / "ffmpeg.zip"
                 _download(url, zip_path, on_progress)
+                expected = _SHA256_BY_URL.get(url)
+                if expected:
+                    actual = _sha256_of(zip_path)
+                    if actual != expected:
+                        raise RuntimeError(
+                            "SHA256 校验失败（内容与钉死版本不符，已丢弃）："
+                            f"{actual}")
                 _extract(zip_path, dest)
             if (dest / "ffmpeg.exe").is_file() and (dest / "ffprobe.exe").is_file():
                 if on_note:

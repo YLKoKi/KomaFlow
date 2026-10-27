@@ -99,6 +99,17 @@ def run_blender_script(
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 🚨 起进程前清掉**上一轮**的产物。报告与进度文件都是固定名、全工程共用：
+    # 本轮若在写报告之前崩掉，不删的话结尾会把上一轮的报告（连着它的
+    # ok=True、上一轮的覆盖率）当成这一轮的结果读回来——实测工单：
+    # 用户换动作后渲出旧场景，日志却显示上一轮的"骨骼匹配 22%"。
+    for stale_artifact in (spec.get("report"), progress_path):
+        if stale_artifact:
+            try:
+                Path(stale_artifact).unlink()
+            except OSError:
+                pass  # 删不掉（被占用等）也照跑，下面还有新鲜度校验兜底
+
     command = [
         str(exe), "--background", "--factory-startup",
         "--python", str(script),
@@ -208,8 +219,24 @@ def run_blender_script(
 
     report_path = spec.get("report")
     if report_path:
-        outcome.report = _read_json(Path(report_path))
+        outcome.report = _read_report_if_fresh(Path(report_path), started)
     return outcome
+
+
+def _read_report_if_fresh(path: Path, started: float, *, grace: float = 2.0) -> dict | None:
+    """只采信**本轮**写出的报告，陈旧/缺失一律按"本轮没有报告"处理。
+
+    报告文件是固定名、跨轮共用：本轮若在写报告之前硬崩（segfault/OOM
+    这类 Python 接不住的死法），不校验时间就会把上一轮的报告连着它的
+    ``ok=True`` 一起继承。以进程启动时刻为界，早于它的报告视为陈旧；
+    ``grace`` 容忍文件系统时间精度与浮点误差。
+    """
+    try:
+        if not path.is_file() or path.stat().st_mtime < started - grace:
+            return None
+    except OSError:
+        return None
+    return _read_json(path)
 
 
 def _terminate(process: subprocess.Popen) -> None:

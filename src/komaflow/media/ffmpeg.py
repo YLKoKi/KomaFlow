@@ -271,7 +271,7 @@ def _run(command: list[str], *, what: str, timeout: float = DEFAULT_TIMEOUT,
         raise KomaFlowError(
             ErrorKind.ASSET_CORRUPT,
             detail=f"{what}失败（{code}）："
-                   f"{completed.stderr.strip()[-300:]}",
+                   f"{stderr.strip()[-300:]}",
         )
 
 

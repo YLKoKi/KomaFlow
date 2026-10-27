@@ -52,18 +52,6 @@ FACE_HEIGHT = 76
 #: 所以界面要显示多大就出多大，省得中间再做一次重采样。
 NORMAL_HEIGHT = 252
 
-#: **透明底**的动作立绘（跳跃）。用户自备，已是 RGBA。
-#: 有它就不用再找"平底图"来抠了 —— 直接裁紧就能用。
-#: 探头立绘：高度，以及裁切窗（相对裁紧后的内容框）。
-#: 用的是 **活泼舞姿** 那张 —— 它上部 15% 处内容宽只有 673px
-#: （跳跃那张 859px），头部区更窄，裁出来是紧凑人形而不是横铺的一截。
-#: 52% 保住"脸 + 耳朵 + 抬到耳边的手"；横向 18%~78% 收掉两侧袖子，
-#: 宽高比落在 0.88，放进说明窗不会把文字挤掉。
-PEEK_HEIGHT = 420
-PEEK_SRC = NORMAL_ART.parent / "透明_活泼舞姿.png"
-PEEK_TOP, PEEK_BOTTOM = 0.00, 0.52
-PEEK_LEFT, PEEK_RIGHT = 0.18, 0.78
-
 #: 角色设定集根目录（环境变量指定，默认放仓库外）
 _ART_ROOT = Path(os.environ.get("KOMEFLOW_ART_DIR", "_assets_source")) / "mascot_source"
 
@@ -79,6 +67,20 @@ EXPRESSION_SHEET = Path(
 JUMP_SOURCE = Path(
     str(_ART_ROOT / "Q版" / "Q3v2_动态跳跃_长发版.png")
 )
+
+#: **透明底**的动作立绘（跳跃）。用户自备，已是 RGBA。
+#: 有它就不用再找"平底图"来抠了 —— 直接裁紧就能用。
+#: 探头立绘：高度，以及裁切窗（相对裁紧后的内容框）。
+#: 用的是 **活泼舞姿** 那张 —— 它上部 15% 处内容宽只有 673px
+#: （跳跃那张 859px），头部区更窄，裁出来是紧凑人形而不是横铺的一截。
+#: 52% 保住"脸 + 耳朵 + 抬到耳边的手"；横向 18%~78% 收掉两侧袖子，
+#: 宽高比落在 0.88，放进说明窗不会把文字挤掉。
+PEEK_HEIGHT = 420
+PEEK_SRC = NORMAL_ART.parent / "透明_活泼舞姿.png"
+PEEK_TOP, PEEK_BOTTOM = 0.00, 0.52
+PEEK_LEFT, PEEK_RIGHT = 0.18, 0.78
+#: 探头立绘保留内容框上部多少（与 PEEK_BOTTOM 同源；抽成具名常量供调用处引用）
+PEEK_KEEP = PEEK_BOTTOM
 
 #: 半身头像的输出边长（原来 84，偏小；放到 96 细节才站得住）
 AVATAR_SIZE = 96
