@@ -5,10 +5,8 @@
 
 > **直接下载（Windows 程序包）** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
-> ⚠️ 当前是**测试版（beta）**：接口与默认值可能调整，GitHub Release 标为 pre-release。
->
 > ⚠️ 请不要用绿色的 `Code → Download ZIP`：那是**源码**，里面没有 exe。
-> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.0-beta.zip`，**约 12.3 MB**）。
+> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.0.zip`，**约 12.3 MB**）。
 
 
 > English: [README.en.md](README.en.md)
@@ -16,7 +14,7 @@
 把 MMD 的**模型（.pmx）**和**动作（.vmd）**拖进来，调用你电脑上已装的 Blender
 完成「装配 → 物理预热 → 分段渲染 → 合并出片」，输出 MP4 或带透明通道的 MOV。
 
-Windows 独立程序（不是 Blender 插件）。**V1.2.0-beta**（测试版）。
+Windows 独立程序（不是 Blender 插件）。**V1.2.0**。
 
 ---
 
@@ -44,7 +42,7 @@ Windows 独立程序（不是 Blender 插件）。**V1.2.0-beta**（测试版）
 
 **方式一：发行包**
 
-1. 下载 Release 里的 `KomaFlow_V1.2.0-beta.zip` 并解压
+1. 下载 Release 里的 `KomaFlow_V1.2.0.zip` 并解压
 2. 双击 `KomaFlow.exe`
 3. 拖入 `.pmx` → 拖入 `.vmd` → 点「开始渲染」
 

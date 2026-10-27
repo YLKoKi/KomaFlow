@@ -1,7 +1,7 @@
-KomaFlow V1.2.0-beta — User Guide (English)
+KomaFlow V1.2.0 — User Guide (English)
 ===========================================
 
-Beta: interfaces and defaults may change.
+Release: interfaces and defaults are stable in this version.
 
 What it is
 ----------

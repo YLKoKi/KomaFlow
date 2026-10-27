@@ -16,7 +16,7 @@ You can switch back to Chinese at any time.
 2. Copy that whole  locales  folder and paste it next to KomaFlow.exe.
 3. The result must look like this:
 
-       KomaFlow_V1.2.0-beta\          <- program folder
+       KomaFlow_V1.2.0\          <- program folder
          KomaFlow.exe
          _internal\
          locales\                     <- must sit at this level
@@ -86,7 +86,7 @@ usage — you can add the missing ones yourself as described above.
   1. 解压语言包，会看到一个 locales 文件夹（含 en.json）
   2. 把整个 locales 文件夹复制到 KomaFlow.exe 旁边
   3. 最终结构：
-         KomaFlow_V1.2.0-beta\
+         KomaFlow_V1.2.0\
            KomaFlow.exe
            _internal\
            locales\          <- 要它在这一层

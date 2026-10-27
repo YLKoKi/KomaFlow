@@ -2,18 +2,16 @@
 
 > **Download the app (Windows)** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
-> ⚠️ This is a **beta** build (pre-release): interfaces and defaults may change.
->
 > Do not use the green `Code → Download ZIP` button — that is the **source code**
 > and contains no executable. The app is the asset on the **Releases** page
-> (`KomaFlow_V1.2.0-beta.zip`, **~12.3 MB**).
+> (`KomaFlow_V1.2.0.zip`, **~12.3 MB**).
 
 
 Turn MMD models (`.pmx`) and motions (`.vmd`) into a finished video — by driving
 the **Blender you already have installed**. The app assembles the scene, builds
 and bakes physics, renders in segments, then muxes the result with FFmpeg.
 
-Windows desktop app (not a Blender add-on). **V1.2.0-beta** (beta).
+Windows desktop app (not a Blender add-on). **V1.2.0**.
 
 > 中文说明见 [README.md](README.md)。界面默认中文，可单独下载英文语言包
 > 切换为英文（见 [English-UI-Guide](#english-ui)）。
@@ -42,7 +40,7 @@ Windows desktop app (not a Blender add-on). **V1.2.0-beta** (beta).
 
 **Release build**
 
-1. Download `KomaFlow_V1.2.0-beta.zip` from Releases and extract it
+1. Download `KomaFlow_V1.2.0.zip` from Releases and extract it
 2. Run `KomaFlow.exe`
 3. Drop a `.pmx` into Character, a `.vmd` into Motion, click Start Render
 
