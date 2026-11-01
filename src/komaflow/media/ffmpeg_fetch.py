@@ -18,26 +18,6 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-#: B2：**先直连官方构建站，镜像只作最后兜底**。
-#:
-#: 原来的顺序是"镜像优先"，也就是用户一点同意，最先建立连接的是
-#: ghfast.top / ghproxy.net / gh-proxy.com 这些第三方转发站 ——
-#: 这与"来自官方构建站"的文案不符，也不该是默认行为。
-_DIRECT = ""
-_MIRROR_PREFIXES = [
-    "https://ghfast.top/",
-    "https://ghproxy.net/",
-    "https://gh-proxy.com/",
-]
-
-_GH_ASSET = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
-             "ffmpeg-master-latest-win64-gpl.zip")
-
-#: 备用：gyan.dev 的滚动 essentials 构建（直连，无需镜像）
-_EXTRA_SOURCES = [
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
-]
-
 #: 首选：**钉死的版本化构建**。URL 与 SHA256 一一对应
 #: （哈希取自 GitHub Release 资产自带的官方 digest）。
 #: 换新版本时更新这里即可；哈希对不上的下载会被直接丢弃并尝试下一个来源。
@@ -47,7 +27,23 @@ _PINNED_SOURCES: list[tuple[str, str]] = [
      "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"),
 ]
 
-_SHA256_BY_URL = dict(_PINNED_SOURCES)
+#: 镜像前缀：**只换传输地址，内容必须是同一个钉死版本**（同一份 SHA256）。
+#:
+#: ⚠️ 之前这里还挂着 GitHub 上"latest 滚动构建"、gyan.dev 的滚动包 ——
+#: 它们没有可信摘要，`fetch()` 会在 expected 为空时**免校验解压安装**。
+#: 那不叫兜底，叫把"下到的任意 exe"装上用户的机器。现在一律只用带摘要的源：
+#: 钉死版本 + 同一版本的镜像；镜像也失败就报错，由用户自己装 FFmpeg。
+_PINNED_MIRROR_PREFIXES = [
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+    "https://gh-proxy.com/",
+]
+
+#: URL → 可信 SHA256。**只有在这张表里的地址才会被下载并安装。**
+_SHA256_BY_URL: dict[str, str] = dict(_PINNED_SOURCES)
+for _pinned_url, _pinned_sha in list(_PINNED_SOURCES):
+    for _mirror_prefix in _PINNED_MIRROR_PREFIXES:
+        _SHA256_BY_URL[_mirror_prefix + _pinned_url] = _pinned_sha
 
 #: 允许发起下载的域名白名单（https only）。下载地址全部来自上方的代码内
 #: 常量表，不接任何外部输入；这里再设一道边界，防止未来改动时
@@ -71,15 +67,18 @@ def install_dir() -> Path:
 
 
 def sources() -> list[str]:
-    """按顺序尝试的下载地址：钉死版本在前，直连次之，镜像最后兜底。"""
+    """按顺序尝试的下载地址：钉死版本在前，同版本的镜像在后。
+
+    **只返回有可信 SHA256 的地址**（:data:`_SHA256_BY_URL`）—— 没有摘要的源
+    连尝试都不尝试，避免退化成"免校验安装"。
+    """
     urls = [url for url, _sha in _PINNED_SOURCES]
-    urls.append(_DIRECT + _GH_ASSET)
-    urls += [*_EXTRA_SOURCES]
-    urls += [prefix + _GH_ASSET for prefix in _MIRROR_PREFIXES]
+    urls += [prefix + url for prefix in _PINNED_MIRROR_PREFIXES
+             for url, _sha in _PINNED_SOURCES]
     seen: set[str] = set()
     ordered: list[str] = []
     for url in urls:
-        if url and url not in seen:
+        if url and url not in seen and url in _SHA256_BY_URL:
             seen.add(url)
             ordered.append(url)
     return ordered
@@ -141,19 +140,23 @@ def fetch(on_progress: Callable[[str, int, int], None] | None = None,
     dest.mkdir(parents=True, exist_ok=True)
     errors: list[str] = []
     for url in sources():
+        expected = _SHA256_BY_URL.get(url)
+        if not expected:
+            # 双保险：sources() 已经过滤过，这里再拦一道 —— 将来谁往
+            # sources() 里加了没摘要的源，也绝不允许解压安装。
+            errors.append(f"{url.split('/')[2]}：没有可信 SHA256，拒绝安装")
+            continue
         try:
             if on_note:
                 on_note(f"正在从 {url.split('/')[2]} 下载 FFmpeg …")
             with tempfile.TemporaryDirectory() as tmp:
                 zip_path = Path(tmp) / "ffmpeg.zip"
                 _download(url, zip_path, on_progress)
-                expected = _SHA256_BY_URL.get(url)
-                if expected:
-                    actual = _sha256_of(zip_path)
-                    if actual != expected:
-                        raise RuntimeError(
-                            "SHA256 校验失败（内容与钉死版本不符，已丢弃）："
-                            f"{actual}")
+                actual = _sha256_of(zip_path)
+                if actual != expected:
+                    raise RuntimeError(
+                        "SHA256 校验失败（内容与钉死版本不符，已丢弃）："
+                        f"{actual}")
                 _extract(zip_path, dest)
             if (dest / "ffmpeg.exe").is_file() and (dest / "ffprobe.exe").is_file():
                 if on_note:
