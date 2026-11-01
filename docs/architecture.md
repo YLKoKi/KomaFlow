@@ -1,8 +1,10 @@
 # KomaFlow 架构大框
 
 > **这份文档是什么**：本项目的架构说明：分层、接口与数据流。
-> **当前状态**：全链路**已跑通并实测**（装配 → 预热 → 分段渲染 → 出 MP4），
-> 界面可用。K-1.8 已定论，见第 11 节。
+> **当前状态**：全链路**已跑通并实测**（装配 → 预热 → 分段渲染 → 出 MP4 / 透明 MOV / PNG 序列）。
+> 界面已可用，但只做过 **150% 缩放的单次冒烟**（100% / 125% 与多窗口尺寸尚未系统性验证）。
+> 打包已出 **V1.2.0**（`release/KomaFlow_V1.2.0.zip`）；第三方许可见 `第三方来源与许可_发布版.md`。
+> K-1.8 已定论，见第 11 节。
 
 ---
 
@@ -94,8 +96,8 @@ KomaFlow/ ← 仓库根
 │ │ ├── base.py 适配器协议
 │ │ ├── blender5.py Blender 5.x 适配器
 │ │ ├── registry.py 适配器注册与选择
-│ │ └── scripts/ 注入 Blender 执行的脚本（待写）
-│ └── ui/ ② 界面层（待写）
+│ │ └── scripts/ 注入 Blender 执行的脚本（build / render / probe / apply_look 等，已实现）
+│ └── ui/ ② 界面层（tkinter，已实现：主窗口 / 设置 / 渲染模型窗口 / 依赖提示）
 ├── tests/
 │ └── unit/ 纯逻辑单元测试
 ├── .gitignore
@@ -104,8 +106,8 @@ KomaFlow/ ← 仓库根
 
 **两点说明**
 
-1. ** 要求文件名不得用中文**。仓库根现有 3 份中文名文档是历史产物；正式开源前需统一为英文名。**本次未改动**，等你确认后再动。
-2. ** 要求的 README / LICENSE / CHANGELOG / CONTRIBUTING 尚未创建**。LICENSE 采用 MIT。
+1. ** 要求文件名不得用中文**。仓库根仍有中文名文件/目录（`第三方来源与许可_发布版.md`、`KomaFlow_使用声明与免责条款.docx`、`第三方许可原文/`）；README / CHANGELOG / LICENSE / SECURITY 已是英文名。改名会牵动发布包内引用与打包脚本，暂缓。
+2. ** 要求的 README / LICENSE / CHANGELOG 已创建**（`README.md`、`README.en.md`、`CHANGELOG.md`、`LICENSE`、`SECURITY.md`）；`CONTRIBUTING.md` 未创建。LICENSE 采用 MIT。
 
 ---
 
@@ -271,11 +273,11 @@ Blender 侧脚本在 `bpy.app.handlers.render_post` 里每 25~30 帧覆写一次
 | 系统托盘与"关窗口继续跑"（K-10.5） | 待做 |
 | 渲染完成/失败的**系统通知与提示音**（K-5.5 / K-10.8） | 界面内弹窗已有；系统级通知待做 |
 | 显存/内存/磁盘的**渲前预检**（K-6.1~6.2） | 现在只做不需要 Blender 的静态体检；显存探测待做 |
-| 音频合流（K-9） | 已由「V1.0 冻结范围」推到 1.5 |
-| PNG 序列 / MOV 导出 | 同上，1.5 |
+| 音频合流（K-9） | 未实现：当前出片**不含音轨**，需要在剪辑软件里自己加 |
+| PNG 序列 / 透明 MOV 导出 | ✅ **已实现并实测**（90 帧 640×360、ProRes 4444 + alpha，全解码通过） |
 | 角色模板存档（K-4）、骨骼手动映射（FR-2.2） | 待做；当前会对失配骨骼给出清单，但不提供手动补齐 |
-| LICENSE / CHANGELOG / CONTRIBUTING | LICENSE：MIT |
-| 打包成 EXE | 装好 PyInstaller 后一步之遥，待做 |
+| LICENSE / CHANGELOG / CONTRIBUTING | LICENSE=MIT、CHANGELOG 已建；CONTRIBUTING 未建 |
+| 打包成 EXE | ✅ **已出 V1.2.0**（`release/KomaFlow_V1.2.0.zip`，PyInstaller onedir、zip 根级布局） |
 
 ---
 
@@ -291,7 +293,7 @@ Blender 侧脚本在 `bpy.app.handlers.render_post` 里每 25~30 帧覆写一次
 | K-7 Blender 探测与版本 | `adapters/base.py` + `adapters/registry.py` |
 | K-10 进程调用 | `core/pipeline.py` + `adapters/scripts/` |
 | FR-1.8 不支持 `.x` | `core/project.py` `validate()` |
-| FR-1.9 工程版本检测 | `core/errors.py` 的 `blend_version_too_new`（实现待 L1） |
+| FR-1.9 工程版本检测 | `core/errors.py` 的 `blend_version_too_new`（已实现） |
 | FR-8.4 / FR-8.10 产物校验 | `core/verify.py` |
 | FR-8.5 错误分类 | `core/errors.py` |
 | E-1.x 三层 | 目录结构 + 各模块导入边界 |
@@ -305,12 +307,12 @@ Blender 侧脚本在 `bpy.app.handlers.render_post` 里每 25~30 帧覆写一次
 
 | # | 事项 | 状态 |
 | --- | --- | --- |
-| 1 | UI 选 tkinter 还是破例引 PySide6 | **待定** |
-| 2 | 仓库根就用 `KomaFlow/`、现有中文名文档是否改名 | **待定** |
-| 3 | 产品定名→ 改 `branding.py` 一行 | 待用户 |
-| 4 | 开源协议→ 才能建 LICENSE | 待用户 |
-| 5 | **K-1.8 定论** → 决定预热要不要自己写偏移逻辑 | **开工第一件事** |
-| 6 | H.264/H.265 编解码专利 | 发布前必做 |
+| 1 | UI 选 tkinter 还是破例引 PySide6 | **已定：tkinter**（见 §1） |
+| 2 | 仓库根就用 `KomaFlow/`、现有中文名文档是否改名 | 仓库根已是发布仓；中文名文档仍在（改名牵动打包引用，暂缓） |
+| 3 | 产品定名→ 改 `branding.py` 一行 | **已定：KomaFlow** |
+| 4 | 开源协议→ 才能建 LICENSE | **已定：MIT**（LICENSE 已建） |
+| 5 | **K-1.8 定论** → 决定预热要不要自己写偏移逻辑 | **已定论**（见 §11.1） |
+| 6 | H.264/H.265 编解码专利 | 待补书面评估结论（V1.2.0 已发布，需在下一版前归档） |
 
 ---
 

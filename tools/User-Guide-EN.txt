@@ -128,5 +128,7 @@ processes.
 
 English UI
 ----------
-The interface is Chinese by default. An English language pack is included in
-this package: see English-UI-Guide.txt.
+The interface is Chinese by default. The English language pack is **not bundled
+with the main package** — download `KomaFlow_语言包_英文_v1.1.zip` from the
+Releases page, then follow English-UI-Guide.txt to put `locales/en.json` next to
+`KomaFlow.exe` (or under `%APPDATA%\KomaFlow\locales\`).
