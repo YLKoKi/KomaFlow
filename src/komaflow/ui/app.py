@@ -2285,6 +2285,9 @@ class KomaFlowApp:
                         "「否」= 放进「舞台」当场景：角色和动作照常参与")
                 if use_as_whole:
                     self.vars["blend"].set(path)
+                    # 角色来源互斥：整份工程与 PMX 只能留一个（审查 R06）。
+                    # 否则界面显示新 PMX、_collect_project 却仍按 blend 渲旧工程。
+                    self.vars["model"].set("")
                     # 记住"这次确定用这份工程"（下次启动自动填回来）
                     self._remember_model(path)
                     self._log(f"按「已配好的工程」接收：{path}")
@@ -2310,6 +2313,11 @@ class KomaFlowApp:
             self._add_motion_file(path)
             return
         self.vars[key].set(path)
+        if key == "model":
+            # 角色来源互斥：选了 PMX 必须清掉「整份工程」，否则
+            # _collect_project() 仍按 blend 走 —— 卡片显示新 PMX，
+            # 实际渲的却是旧 .blend（审查 R06）。
+            self.vars["blend"].set("")
         if key == "stage":
             # 加了背景 → 「渲染背景」自动开
             self.transparent.set("开")
@@ -2389,6 +2397,21 @@ class KomaFlowApp:
             if had:
                 self._log(f"已清空动作卡（{had} 个文件）")
                 self.vars["status"].set(f"已清空 {had} 个动作文件，可以重新拖入")
+            return
+        if key == "model":
+            # 角色卡对应两条互斥路线（PMX / 整份 .blend 工程），
+            # 点「×」必须两条都清 —— 只清 model 会留下旧 blend 路由（审查 R06）。
+            labels = []
+            if self.vars["model"].get().strip():
+                labels.append("角色模型")
+            if self.vars["blend"].get().strip():
+                labels.append("整份工程")
+            self.vars["model"].set("")
+            self.vars["blend"].set("")
+            self._refresh_cards()
+            if labels:
+                self._log(f"已清空：{' / '.join(labels)}")
+                self.vars["status"].set("已清空角色卡（模型与工程），可以重新拖入")
             return
         name = key
         cleared = self._zone_label(name) if self.vars[name].get().strip() else ""
