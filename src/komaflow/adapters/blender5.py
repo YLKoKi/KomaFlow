@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -20,6 +21,27 @@ from .base import BlenderAdapter, BlenderInfo, VersionTuple
 
 #: 探测超时（秒）。实测纯启动约 1.5 秒，给足余量。
 PROBE_TIMEOUT = 120
+
+
+def _extract_blender_install_script(source: Path) -> str:
+    """从 ``install_mmd_tools.py`` 里取出给 Blender 执行的 ``SCRIPT`` 常量。
+
+    ⚠️ 为什么需要拆：那个文件是**系统 Python 的包装器**（``main()`` 里再起
+    Blender 子进程）。把它直接当 Blender 的 ``--python`` 脚本跑时，
+    ``sys.argv[1]`` 是 ``--background``，包装器会去启动一个叫 ``--background``
+    的程序 —— 插件安装必然失败（审查 R04）。
+
+    这里只做静态取值（模块级 ``SCRIPT = '...'`` 字面量），不执行该文件。
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"), str(source))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "SCRIPT"
+                for target in node.targets):
+            value = ast.literal_eval(node.value)
+            if isinstance(value, str) and "bpy" in value and "RESULT " in value:
+                return value
+    raise ValueError("install_mmd_tools.py 里找不到可执行的 SCRIPT 常量")
 
 
 class Blender5Adapter(BlenderAdapter):
@@ -118,25 +140,37 @@ class Blender5Adapter(BlenderAdapter):
         if not exe_path.is_file():
             return {"ok": False, "message": f"找不到这个 Blender：{exe_path}"}
 
-        script = self.script("install_mmd_tools.py")
-        if not script.is_file():
-            return {"ok": False, "message": f"缺少安装脚本：{script}"}
+        wrapper = self.script("install_mmd_tools.py")
+        if not wrapper.is_file():
+            return {"ok": False, "message": f"缺少安装脚本：{wrapper}"}
+        try:
+            payload = _extract_blender_install_script(wrapper)
+        except (OSError, SyntaxError, ValueError) as exc:
+            return {"ok": False, "message": f"安装脚本内容不完整：{exc}"}
 
         # ⚠️ 这里**不能用 --factory-startup**：那会跳过用户的扩展仓库配置，
         # 而装插件正需要读它（官方仓库地址就存在用户偏好里）。
         # 这也是本方法跟 probe() 唯一不同的地方。
-        command = [str(exe_path), "--background", "--python", str(script)]
-        try:
-            completed = subprocess.run(
-                command, capture_output=True, text=True, timeout=timeout,
-                encoding="utf-8", errors="replace",
-                stdin=subprocess.DEVNULL, **_no_window(),
-            )
-        except subprocess.TimeoutExpired:
-            return {"ok": False,
-                    "message": f"安装超时（{timeout} 秒）—— 可能网络太慢或不通。"}
-        except OSError as exc:
-            return {"ok": False, "message": f"起不来 Blender：{exc}"}
+        #
+        # 🚨 交给 Blender 的必须是**SCRIPT 本身**（临时 .py），不能是那个
+        # 系统 Python 包装器 —— 否则 sys.argv[1]='--background' 会被当成
+        # blender.exe 去启动（审查 R04，用户点"自动安装"必失败）。
+        with tempfile.TemporaryDirectory(prefix="komaflow-install-") as tmp:
+            script = Path(tmp) / "install_mmd_tools_in_blender.py"
+            script.write_text(payload, encoding="utf-8")
+            command = [str(exe_path), "--background", "--python-exit-code", "0",
+                       "--python", str(script)]
+            try:
+                completed = subprocess.run(
+                    command, capture_output=True, text=True, timeout=timeout,
+                    encoding="utf-8", errors="replace",
+                    stdin=subprocess.DEVNULL, **_no_window(),
+                )
+            except subprocess.TimeoutExpired:
+                return {"ok": False,
+                        "message": f"安装超时（{timeout} 秒）—— 可能网络太慢或不通。"}
+            except OSError as exc:
+                return {"ok": False, "message": f"起不来 Blender：{exc}"}
 
         for row in (completed.stdout or "").splitlines():
             if row.startswith("RESULT "):
