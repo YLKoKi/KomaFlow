@@ -248,7 +248,9 @@ class SettingsWindow:
             self.vars[key].set(chosen)
 
     def _reset(self) -> None:
-        from .settings import default_paths
+        # R19：default_paths 在 komaflow.settings（父包），不是 komaflow.ui.settings
+        # —— 原来 from .settings 必然 ModuleNotFoundError，点“恢复默认位置”就炸。
+        from ..settings import default_paths
 
         for key, value in default_paths().items():
             if key in self.vars:

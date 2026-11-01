@@ -342,7 +342,8 @@ class NoticeWindow:
         # 它不动层叠、不产生新事件，从根本上没有自激的可能。
         rect = T.round_rect(canvas, x, y, x + w, y + h, radius,
                             fill=fill, outline=outline, width=1)
-        canvas.create_text(x + w / 2, y + h / 2, text=text, fill=fg, font=font)
+        label = canvas.create_text(x + w / 2, y + h / 2, text=text, fill=fg,
+                                   font=font)
 
         hot = T.NAVY_SOFT if primary else T.BEIGE_SOFT
         state = {"hovered": False}
@@ -354,11 +355,13 @@ class NoticeWindow:
             canvas.itemconfigure(rect, fill=hot if hovered else fill)
             canvas.configure(cursor="hand2" if hovered else "")
 
-        # 事件绑在**矩形**上，不绑标签 —— 标签把文字也算进去，
-        # 而文字变化又会牵动命中判定，容易再惹出合成的进出事件。
-        canvas.tag_bind(rect, "<Enter>", lambda _e: set_hover(True))
-        canvas.tag_bind(rect, "<Leave>", lambda _e: set_hover(False))
-        canvas.tag_bind(rect, "<Button-1>", lambda _e: command())
+        # R18：文字压在矩形上面 —— Canvas 命中拿到的是**文字**，只绑矩形的话
+        # 用户点按钮中心（文字）毫无反应。两个 item 都绑同一组事件；
+        # 仍然只改填充色（不重建/不 tag_raise），避免悬停自激。
+        for item in (rect, label):
+            canvas.tag_bind(item, "<Enter>", lambda _e: set_hover(True))
+            canvas.tag_bind(item, "<Leave>", lambda _e: set_hover(False))
+            canvas.tag_bind(item, "<Button-1>", lambda _e: command())
 
     def _draw_mascot(self, canvas: tk.Canvas, height: int) -> None:
         """右下角一只**探头**的立绘：下沿贴窗沿，上半身探出来。
