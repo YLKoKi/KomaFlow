@@ -845,6 +845,9 @@ def _project_usable(blend_path: Path, report: dict) -> tuple[bool, str]:
     只比素材指纹是不够的：终止/崩溃时可能留下一个**空壳工程**
     （实测 0.08 MB、没有相机、只有 1 帧），拿去渲就是"退出码 1 + 产物 missing"。
     """
+    if not isinstance(report, dict):
+        # 缓存报告被写成数组/标量时也不能炸（调用方另有 R09 的守卫，这里兜底）
+        report = {}
     if not blend_path.is_file():
         return False, "工程文件不存在"
     size_mb = blend_path.stat().st_size / 1048576
@@ -855,7 +858,15 @@ def _project_usable(blend_path: Path, report: dict) -> tuple[bool, str]:
     # 而"单帧预览与整片共用同一份工程"正是宣传里的点。空壳工程由上面 <1 MB 兜住。
     if int(report.get("total_frames") or 0) < 1:
         return False, "工程里一帧都没有"
-    if not report.get("camera"):
+    # R11：相机字段统一。build.py 只在**导入镜头 VMD** 时写顶层 report.camera；
+    # 自动机位写在 report.auto_camera、最终相机统一在 report.scene.camera。
+    # 只认 report.camera 会把自动机位的有效工程判成"没有相机"，每次重新装配+烘焙。
+    scene = report.get("scene") or {}
+    auto_camera = report.get("auto_camera") or {}
+    camera = (report.get("camera") or scene.get("camera")
+              or (auto_camera.get("camera")
+                  if isinstance(auto_camera, dict) else None))
+    if not camera:
         return False, "工程里没有相机"
     # 物理：报告里带烘焙错误（或烘了却没烘成）的工程不能复用 ——
     # 头发裙摆会静止甚至比关物理还僵，而且怎么重渲都是旧的坏结果。
@@ -1125,6 +1136,8 @@ def _prepare_and_assemble(
                        f"为免覆盖你的原件，另存为：{durable_blend.name}"))
     assembly_key = _assembly_fingerprint(build_spec)
 
+    # R08：侧车缺失时这里也要有默认值（下面会读 usable/why_not）。
+    usable, why_not = False, "没有可复用的工程记录"
     if durable_blend.is_file() and durable_key.is_file():
         try:
             saved = json.loads(durable_key.read_text(encoding="utf-8"))
@@ -1185,12 +1198,16 @@ def _prepare_and_assemble(
                 cached = json.loads(build_report_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 cached = None
-            ok_work, why_work = _project_usable(work_blend, cached)
-            if cached.get("ok") and ok_work:
+            # R09：解析“成功”也可能是 JSON 数组/数字；缓存必须是 dict 才能
+            # 交给 _project_usable / cached.get。损坏就当缓存未命中、重新装配。
+            if not isinstance(cached, dict):
+                cached = None
+            ok_work, why_work = _project_usable(work_blend, cached or {})
+            if cached is not None and cached.get("ok") and ok_work:
                 _emit(on_event, "log", level="info",
                       message="素材与参数没变，复用已有的装配结果")
                 return adapter, exe, _refresh_frame_fields(cached, params)
-            if cached.get("ok") and not ok_work:
+            if cached is not None and cached.get("ok") and not ok_work:
                 _emit(on_event, "log", level="warn",
                       message=f"上一次的装配结果不可用（{why_work}），重新装配")
 
@@ -1451,6 +1468,24 @@ def _safe_filename(name: str) -> str:
     return text or "单帧预览"
 
 
+def _clamp_still_frame(report: dict, frame: int) -> int:
+    """把请求的**绝对帧号**夹到工程帧范围内（R10）。
+
+    旧实现用 ``total_frames - 1`` —— 那是"区间长度"，不是时间轴末帧：
+    区间 120~127（total_frames=8）时请求 124 会被静默改成 7，渲出来是错的帧。
+    边界优先用 report 的 frame_start/frame_end，其次 motion_span.max，
+    最后才退回 total_frames（此时起点按 0 算）。
+    """
+    start = int(report.get("frame_start") or 0)
+    last = int(report.get("frame_end") or 0)
+    if last <= start:
+        span = report.get("motion_span") or {}
+        last = int(span.get("max") or 0)
+    if last <= start:
+        last = start + max(int(report.get("total_frames") or 0), 1) - 1
+    return max(start, min(int(frame), last))
+
+
 def render_still(
     project: Project,
     work_dir: str | Path,
@@ -1491,7 +1526,8 @@ def render_still(
         raise KomaFlowError(ErrorKind.USER_CANCELLED)
 
     total_frames = int(report.get("total_frames") or 0)
-    frame = max(0, min(int(frame), max(0, total_frames - 1)))
+    # R10：按**绝对帧号**夹边界（total_frames 是区间长度，不是时间轴末帧）
+    frame = _clamp_still_frame(report, frame)
     params = project.params
 
     # 文件名：用户填的 > 动作名 > 兜底

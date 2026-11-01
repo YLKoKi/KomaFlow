@@ -920,6 +920,9 @@ def main() -> int:
     bad = (report["隐私命中"] or report["不该带的文件"]
            or report["编译垃圾目录"] or report["误带Blender"]
            or not report["第三方许可在包里"]
+           # R07：运行库许可原文缺一份也必须失败 —— 以前只打“★ 缺了”，
+           # 最后仍 exit 0 并打印“体检全过”，发布检查形同虚设。
+           or not report["运行库许可原文在包里"]
            or not report["合规文档在包里"])
     if bad:
         print("\n★ 体检没过 —— 上面列出的问题必须先修掉再分发。")
