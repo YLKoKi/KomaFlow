@@ -114,7 +114,8 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
                  edge_skip=None, frame_skip=None, no_edge=False,
                  look=None, bg=None, look_inner=None,
                  save_blend=None, blend_keep_camera=False,
-                 blender=None, timeout=None, on_progress=None) -> dict:
+                 blender=None, timeout=None, on_progress=None,
+                 cancel=None) -> dict:
     """渲一个 ``.pmx``，返回产物清单；**可以顺便存一份 .blend**。
 
     :param pmx: 模型路径（用户自己的，**绝不拷进程序目录**）
@@ -258,6 +259,7 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
 
     log_path = None
     timed_out = False
+    cancelled = False
     returncode = None
     try:
         handle = tempfile.NamedTemporaryFile(
@@ -274,6 +276,17 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
                 returncode = process.poll()
                 if returncode is not None:
                     break
+                if cancel is not None and cancel.is_set():
+                    # 用户关掉「渲染模型」窗：立刻收掉子进程，别继续占 CPU/GPU，
+                    # 也别让它和下一个窗口同时写同名 PNG / .blend（审查 R17）。
+                    cancelled = True
+                    process.kill()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    returncode = -1
+                    break
                 if timeout and (time.time() - started) > timeout:
                     timed_out = True
                     process.kill()
@@ -285,6 +298,14 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
     finally:
         stop.set()
         watcher.join(timeout=1.5)
+
+    # R12：子进程结束后**再同步读一次**最终进度。
+    # watcher 每 0.25 秒才轮询一次，最后一次 done（含完整 outputs）完全可能
+    # 落在两次轮询之间；只信 watcher 会丢掉最后一张图 / 整份产物清单。
+    final = _read_progress(progress_file)
+    if isinstance(final, dict) and final:
+        result.clear()
+        result.update(final)
 
     log_text = ""
     if log_path is not None:
@@ -301,6 +322,8 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
     except OSError:
         pass
 
+    if cancelled:
+        raise MMDError("渲染已取消（窗口已关闭）。", log_text, result)
     if timed_out:
         raise MMDError(f"渲染超时（超过 {timeout} 秒）—— Blender 可能卡住了。",
                        log_text, result)
@@ -314,6 +337,11 @@ def render_model(pmx, outdir, name=None, *, shots=("front", "side", "back"),
     if not result:
         raise MMDError("渲染没有回报进度（Blender 可能没跑到出图那步）。",
                        log_text, result)
+    if result.get("stage") != "done":
+        # R12：进程正常退出但最后阶段不是 done —— 进度被人为截断/写坏。
+        raise MMDError(
+            f"渲染进程结束了，但最后阶段是 {result.get('stage')!r}（不是 done）；"
+            "进度可能被截断，产物不可信。", log_text, result)
 
     outputs = [str(p) for p in (result.get("outputs") or [])]
     # ⚠️ 产物要**按视角排好**（正面在前），不能信 JSON 里的顺序 ——
@@ -355,7 +383,7 @@ def _view_order(stem: str, views: list[str], prefix: str) -> tuple[int, str]:
 
 
 def stitch_views(paths, out_path, *, prefix: str = "三视图",
-                 blender=None, timeout: int = 240) -> dict:
+                 blender=None, timeout: int = 240, cancel=None) -> dict:
     """把多张出图拼成一张三视图。
 
     跑在 **Blender 里**（它自带 PIL）—— 这样不用引 pip 依赖（NFR-16），
@@ -373,21 +401,59 @@ def stitch_views(paths, out_path, *, prefix: str = "三视图",
     if not STITCH_SCRIPT.is_file():
         return {"ok": False, "path": "", "message": f"缺少拼图脚本：{STITCH_SCRIPT}"}
 
+    if cancel is not None and cancel.is_set():
+        return {"ok": False, "path": "", "message": "已取消"}
+
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     command = [exe, "--background", "--python", str(STITCH_SCRIPT),
                "--", str(prefix), str(target)] + files
+    # R17：拼图也是 Blender 子进程 —— 关窗后必须能取消，不能留在后台跑。
+    log_handle = tempfile.NamedTemporaryFile(
+        "w+", encoding="utf-8", errors="replace", suffix=".log",
+        prefix="komaflow_stitch_", delete=False)
+    stitch_log = Path(log_handle.name)
+    log_handle.close()
+    log_tail = ""
     try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-            **(_no_window()))
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "path": "", "message": f"拼图超时（{timeout} 秒）"}
+        with open(stitch_log, "w", encoding="utf-8", errors="replace") as log:
+            process = subprocess.Popen(
+                command, stdout=log, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, **(_no_window()))
+            started = time.time()
+            while True:
+                code = process.poll()
+                if code is not None:
+                    break
+                if cancel is not None and cancel.is_set():
+                    process.kill()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    return {"ok": False, "path": "", "message": "已取消拼图"}
+                if timeout and (time.time() - started) > timeout:
+                    process.kill()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    return {"ok": False, "path": "",
+                            "message": f"拼图超时（{timeout} 秒）"}
+                time.sleep(0.2)
     except OSError as exc:
         return {"ok": False, "path": "", "message": f"拼不起来：{exc}"}
+    finally:
+        try:
+            log_tail = stitch_log.read_text(
+                encoding="utf-8", errors="replace").strip()[-300:]
+        except OSError:
+            log_tail = ""
+        try:
+            stitch_log.unlink()
+        except OSError:
+            pass
 
-    if completed.returncode != 0 or not target.is_file():
-        tail = (completed.stdout or completed.stderr or "").strip()[-300:]
-        return {"ok": False, "path": "", "message": f"拼图没成功。{tail}"}
+    if code != 0 or not target.is_file():
+        return {"ok": False, "path": "", "message": f"拼图没成功。{log_tail}"}
     return {"ok": True, "path": str(target), "message": "已拼成一张三视图"}

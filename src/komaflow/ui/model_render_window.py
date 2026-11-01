@@ -101,6 +101,8 @@ class ModelRenderWindow:
         self.events: queue.Queue = queue.Queue()
         self.worker: threading.Thread | None = None
         self.cancel = threading.Event()
+        #: 窗口是否已被用户关掉（worker 可能还在收尾，此时不释放单例）
+        self._closed = False
         self.outputs: list[str] = []
         self.sheet = ""
         #: 这次顺便存出来的**可编辑角色 .blend**（存到了才是非空）
@@ -531,12 +533,20 @@ class ModelRenderWindow:
             """
             try:
                 result = mmd_render.render_model(
-                    pmx, outdir, name, on_progress=on_progress, **options)
+                    pmx, outdir, name, on_progress=on_progress,
+                    cancel=self.cancel, **options)
             except mmd_render.MMDError as exc:
                 self.events.put(("error", f"{exc}||{exc.log}"))
+                self._release_instance()
                 return
             except Exception as exc: # noqa: BLE001
                 self.events.put(("error", f"{type(exc).__name__}: {exc}||"))
+                self._release_instance()
+                return
+
+            # 关窗后渲染线程可能还在跑（取消要一点时间）：不要再拼图/回填。
+            if self.cancel.is_set():
+                self._release_instance()
                 return
 
             # 拼三视图（同样起 Blender 子进程，所以必须留在本线程里）
@@ -550,13 +560,15 @@ class ModelRenderWindow:
                 try:
                     stitched = mmd_render.stitch_views(
                         result["outputs"], sheet_path,
-                        prefix=str(result.get("name") or ""), blender=exe_now)
+                        prefix=str(result.get("name") or ""), blender=exe_now,
+                        cancel=self.cancel)
                 except Exception as exc: # noqa: BLE001
                     stitched = {"ok": False, "path": "",
                                 "message": f"{type(exc).__name__}: {exc}"}
             result["sheet"] = stitched.get("path") if stitched.get("ok") else ""
             result["stitch_message"] = str(stitched.get("message") or "")
             self.events.put(("finished", result))
+            self._release_instance()
 
         self.worker = threading.Thread(target=job, daemon=True,
                                        name="KomaFlow-model-render")
@@ -713,24 +725,33 @@ class ModelRenderWindow:
         self._hide_confirm()
 
     # ------------------------------------------------------------ 关
+    def _release_instance(self) -> None:
+        """worker 真正结束时才释放单例（关窗时它可能还在终止子进程）。"""
+        if ModelRenderWindow._instance is self:
+            ModelRenderWindow._instance = None
+
     def close(self) -> None:
+        self._closed = True
         if self.worker is not None and self.worker.is_alive():
+            # 只发取消信号；**不要**在这里释放单例，也不要置空 worker ——
+            # worker 还要 terminate/wait 子进程（R17）。立刻放行会让用户
+            # 再开一个窗口，两个进程同时写同名 PNG / .blend。
             self.cancel.set()
-            self.worker = None
+        else:
+            ModelRenderWindow._instance = None
         if self._job is not None:
             try:
                 self.window.after_cancel(self._job)
             except tk.TclError:
                 pass
             self._job = None
-        ModelRenderWindow._instance = None
         try:
             self.window.destroy()
         except tk.TclError:
             pass
 
 
-def open_model_render(app) -> ModelRenderWindow:
+def open_model_render(app) -> ModelRenderWindow | None:
     """打开「渲染模型」窗；已经开着就抬到前面（不重复开）。"""
     existing = ModelRenderWindow._instance
     if existing is not None:
@@ -742,6 +763,15 @@ def open_model_render(app) -> ModelRenderWindow:
                 return existing
         except tk.TclError:
             pass
+        # 上一个窗口已关，但渲染线程还在终止子进程/收尾：先别开新的，
+        # 否则两个进程会同时写同名 PNG / .blend（审查 R17）。
+        worker = getattr(existing, "worker", None)
+        if worker is not None and worker.is_alive():
+            try:
+                app._log("上一次「渲染模型」还在收尾，等它结束再开新窗口。", "warn")
+            except Exception: # noqa: BLE001
+                pass
+            return None
         ModelRenderWindow._instance = None
 
     window = ModelRenderWindow(app)
