@@ -2309,7 +2309,10 @@ class KomaFlowApp:
             self._log(f"「角色模型」接收了一张图（参考图，不是模型）：{path}", "warn")
             return
         # 动作 / 表情卡：**一个有序列表**，数量不限。
-        if key == "motion":
+        # ⚠️ 纯表情 VMD 会被 _classify_vmd 归类成 "expression"（审查 R16）——
+        # 这里必须和 "motion" 同等对待，否则会去写已删除的 vars["expression"]，
+        # 抛 KeyError 且后面拖入的文件也不再处理。
+        if key in ("motion", "expression"):
             self._add_motion_file(path)
             return
         self.vars[key].set(path)

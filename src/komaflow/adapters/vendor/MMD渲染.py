@@ -283,8 +283,20 @@ if _SHRINK:
         except Exception as _e:
             log(" 降采样失败:", _img.name, _e)
 
-meshes = [o for o in bpy.data.objects if o.type == "MESH" and len(o.material_slots) > 4]
-mesh = max(meshes, key=lambda o: len(o.data.vertices))
+def _pick_mesh(objects):
+    """挑出代表模型：**任何网格都算合法**（材质槽数量与模型合法性无关）。
+
+    ⚠️ 以前过滤 ``len(o.material_slots) > 4``（审查 R15）：单材质角色 / 低模
+    是有效 PMX，却被过滤成空列表 → ``max()`` 直接 ValueError。现在只要求
+    至少有一个 MESH；多个网格仍按顶点数取最大（单角色约定，见说明文档）。
+    """
+    meshes = [o for o in objects if getattr(o, "type", "") == "MESH"]
+    if not meshes:
+        raise RuntimeError("场景里没有任何网格（MESH）模型 —— 无法做静帧渲染。")
+    return max(meshes, key=lambda o: len(getattr(o.data, "vertices", [])))
+
+
+mesh = _pick_mesh(bpy.data.objects)
 log("模型:", mesh.name, "顶点", len(mesh.data.vertices), "材质槽", len(mesh.material_slots))
 
 def tex_of(mat, key):

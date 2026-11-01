@@ -121,14 +121,28 @@ def _log(message: str) -> None:
 #: ``stable`` 收小步长、提高迭代（头发裙摆不抖，代价是慢），
 #: ``flowing`` 放大步长、减少迭代（更"飘"，也更快，但薄片之间可能穿）。
 def _mmd_root_object():
-    """找 MMD 的根空物体。
+    """找 **目标骨架对应的** MMD 根空物体。
 
     ⚠️ **不能**用 ``hasattr(o, "mmd_root")`` —— mmd_tools 把这个属性注册在
     Object 类型上，**每个物体都有**（连刚体辅助空物体 ``ncc.*`` 都有，
     读出来 is_built=False）。按 hasattr 找会抓到辅助物体，于是"build 成功但
     is_built 仍是 False"，把后面的烘焙误判成"没 build 过"。
     正确判据是 ``mmd_type == "ROOT"``。
+
+    ⚠️ **也不能取全局第一个 ROOT**（审查 R13）：主流程允许先导舞台再导人物，
+    ``bpy.data.objects`` 里第一个 ROOT 可能是舞台的根 —— 那样 build_rig 会
+    构舞台、人物反而没物理。先从**目标骨架**的父级链里找它自己的 ROOT。
     """
+    arm = _target_armature()
+    if arm is not None:
+        node = getattr(arm, "parent", None)
+        while node is not None:
+            if getattr(node, "mmd_type", "") == "ROOT":
+                return node
+            node = getattr(node, "parent", None)
+        # 骨架没有 ROOT 父级（非标准工程）：退回骨架父级（通常就是模型空物体）
+        if getattr(arm, "parent", None) is not None:
+            return arm.parent
     for obj in bpy.data.objects:
         if getattr(obj, "mmd_type", "") == "ROOT":
             return obj
@@ -1304,6 +1318,15 @@ def _lock_lights_to_camera() -> dict:
             "static": ["KomaFlow_Key", "KomaFlow_Fill"]}
 
 
+def _framing_target_height(height: float, fraction: float) -> float:
+    """要显示的竖直高度 = 模型高度 × 景别比例（full=1 / 七分身=.7 / 半身=.5）。
+
+    ⚠️ 以前写成 ``height / fraction`` —— 选半身等于把视野放大 2 倍、相机拉远
+    2 倍，人物反而更小（审查 R14）。比例是"要看多少"，只能乘。
+    """
+    return float(height) * float(fraction)
+
+
 def _ensure_camera(framing: str) -> dict:
     """没有镜头文件时，自动生成一个正面机位（V1.0 冻结范围要求）。
 
@@ -1356,10 +1379,13 @@ def _ensure_camera(framing: str) -> dict:
         else camera_data.sensor_width
     fov_v = 2.0 * math.atan(sensor_h / (2.0 * camera_data.lens))
 
-    target_height = height / fraction
+    target_height = _framing_target_height(height, fraction)
     distance = (target_height / 2.0) / math.tan(fov_v / 2.0) * 1.06 # 6% 余量
+    # 半身/七分身：取景中心要**上移**到"从头顶往下这一段"的中心，
+    # 否则拉近后画面中心还停在全身腰线，人物头部出画（审查 R14）。
+    camera_center_z = max_corner.z - target_height / 2.0
     # 面向 +Y（MMD 模型默认朝 +Y），机位在 -Y 一侧
-    camera.location = (0.0, -distance, center_z)
+    camera.location = (0.0, -distance, camera_center_z)
     camera.rotation_euler = (math.radians(90.0), 0.0, 0.0)
 
     return {
@@ -1367,7 +1393,7 @@ def _ensure_camera(framing: str) -> dict:
         "camera": camera.name,
         "framing": framing,
         "model_height": round(height, 4),
-        "center_z": round(center_z, 4),
+        "center_z": round(camera_center_z, 4),
         "distance": round(distance, 4),
         "fov_vertical_deg": round(math.degrees(fov_v), 3),
     }
