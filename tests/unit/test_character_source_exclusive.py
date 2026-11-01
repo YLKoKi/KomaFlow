@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""R06 回归：角色卡的「PMX」与「整份 .blend 工程」必须互斥。
+"""R06 回归：角色卡的「PMX」与「整份 .blend 工程」必须互斥（所有入口）。
 
-审查报告（2026-10-30）R06：先拖入 old.blend、再换 new.pmx 时，``_assign``
-只写 ``vars["model"]``，不清 ``vars["blend"]``；``_collect_project`` 见
-blend 非空仍走 blend 路线 —— 卡片显示新 PMX，实际渲的是旧工程。
-清空角色卡也只清 model，旧 blend 路由还在。
+审查报告（2026-10-30）R06 + reviewer T-28 P1：三个入口都漏清另一条 ——
+``_assign``、``_clear_zone``、``accept_model_render``；启动恢复还可能把两条
+同时填回来（第四入口）。卡片显示新 PMX、``_collect_project`` 却按旧 blend
+走 → 实际渲的是旧工程。
 
 这里用 AST 取出真实方法 + 假对象执行（不建 Tk 窗口）。
 """
@@ -12,6 +12,7 @@ blend 非空仍走 blend 路线 —— 卡片显示新 PMX，实际渲的是旧�
 from __future__ import annotations
 
 import ast
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -31,6 +32,17 @@ class _Var:
         self.value = value
 
 
+class _Settings:
+    def __init__(self):
+        self.last_model = ""
+        self.last_blend = ""
+        self.last_look_blend = ""
+        self.saves = 0
+
+    def save(self):
+        self.saves += 1
+
+
 class _FakeApp:
     def __init__(self):
         self.vars = {name: _Var() for name in
@@ -40,9 +52,11 @@ class _FakeApp:
         self.remembered: list[str] = []
         self.logs: list[tuple[str, str]] = []
         self.refreshed = 0
-        self.asked = 0
+        self.panels = 0
+        self.reset_calls = 0
+        self.settings = _Settings()
+        self.outputs: list[str] = []
 
-    # -- 被 _assign / _clear_zone 用到的少量方法 --
     def _motion_paths(self):
         return [p for p in self.motion_list if p]
 
@@ -51,6 +65,11 @@ class _FakeApp:
 
     def _remember_model(self, path):
         self.remembered.append(path)
+        # 真实实现会按后缀二选一写设置；这里复刻关键副作用，便于断言
+        if str(path).lower().endswith(".blend"):
+            self.settings.last_blend, self.settings.last_model = str(path), ""
+        else:
+            self.settings.last_model, self.settings.last_blend = str(path), ""
 
     def _log(self, message, level="info"):
         self.logs.append((level, message))
@@ -58,34 +77,46 @@ class _FakeApp:
     def _refresh_cards(self):
         self.refreshed += 1
 
+    def _refresh_panels(self):
+        self.panels += 1
 
-def _load_methods():
-    """从 app.py 里取出 ``_assign`` / ``_clear_zone``（不 import 整个 UI）。"""
+    def reset_cards_to_drop(self):
+        self.reset_calls += 1
+
+
+def _load_methods(names: set[str] | None = None):
+    """从 app.py 里取出指定方法（不 import 整个 UI）。"""
+    wanted = names or {"_assign", "_clear_zone", "_set_character_source"}
     tree = ast.parse(APP.read_text(encoding="utf-8"), str(APP))
     klass = next(n for n in tree.body
                  if isinstance(n, ast.ClassDef) and n.name == "KomaFlowApp")
-    wanted = {"_assign", "_clear_zone"}
     nodes = [n for n in klass.body
              if isinstance(n, ast.FunctionDef) and n.name in wanted]
-    assert {n.name for n in nodes} == wanted, "app.py 里找不到这两个方法"
+    assert {n.name for n in nodes} == wanted, f"app.py 里缺少：{wanted}"
 
     class _MessageBox:
         @staticmethod
         def askyesno(*_args, **_kwargs):
             return True
 
-    namespace = {"os": __import__("os"), "messagebox": _MessageBox}
+    namespace = {"os": __import__("os"), "messagebox": _MessageBox,
+                 "Path": Path}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"),
          namespace)
     return namespace
+
+
+def _bind(app: _FakeApp, ns: dict, names: set[str]) -> None:
+    for name in names:
+        setattr(app, name, types.MethodType(ns[name], app))
 
 
 class CharacterSourceExclusiveTests(unittest.TestCase):
     def setUp(self):
         self.ns = _load_methods()
         self.app = _FakeApp()
-        for name in ("_assign", "_clear_zone"):
-            setattr(self.app, name, types.MethodType(self.ns[name], self.app))
+        _bind(self.app, self.ns, {"_assign", "_clear_zone",
+                                  "_set_character_source"})
 
     def test_pmx_after_blend_clears_blend_route(self):
         self.app.vars["blend"].set(r"X:\old.blend")
@@ -114,6 +145,75 @@ class CharacterSourceExclusiveTests(unittest.TestCase):
         self.app._assign("stage", r"X:\stage.blend")
         self.assertEqual(self.app.vars["stage"].get(), r"X:\stage.blend")
         self.assertEqual(self.app.vars["model"].get(), r"X:\new.pmx")
+
+
+class AcceptModelRenderSourceTests(unittest.TestCase):
+    """R06 第三入口：模型渲染「继续」回填角色卡。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.pmx = self.root / "new.pmx"
+        self.pmx.write_bytes(b"PMX")
+        self.blend = self.root / "new.blend"
+        self.blend.write_bytes(b"BLEND")
+        self.ns = _load_methods({"_set_character_source", "accept_model_render"})
+        self.app = _FakeApp()
+        _bind(self.app, self.ns, {"_set_character_source",
+                                  "accept_model_render"})
+
+    def test_accept_pmx_clears_old_blend(self):
+        self.app.vars["blend"].set(r"X:\old.blend")
+        self.app.accept_model_render(str(self.pmx), outputs=[],
+                                     source_pmx=str(self.pmx))
+        self.assertEqual(self.app.vars["model"].get(), str(self.pmx))
+        self.assertEqual(self.app.vars["blend"].get(), "",
+                         "旧 blend 没清 → route 仍是 blend（reviewer T-28 P1）")
+        self.assertEqual(self.app.remembered, [str(self.pmx)])
+
+    def test_accept_blend_fallback_goes_to_blend_field(self):
+        # 拿不到源 PMX 时退回整份工程：必须进 blend，不能塞 model
+        self.app.vars["model"].set(r"X:\old.pmx")
+        self.app.accept_model_render(str(self.blend), outputs=[],
+                                     source_pmx="")
+        self.assertEqual(self.app.vars["blend"].get(), str(self.blend))
+        self.assertEqual(self.app.vars["model"].get(), "")
+
+
+class RestoreLastCharacterTests(unittest.TestCase):
+    """R06 第四入口：启动恢复不能同时填 model 与 blend。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.model = self.root / "m.pmx"
+        self.model.write_bytes(b"PMX")
+        self.blend = self.root / "m.blend"
+        self.blend.write_bytes(b"BLEND")
+        self.ns = _load_methods({"_set_character_source",
+                                 "_restore_last_model"})
+        self.app = _FakeApp()
+        _bind(self.app, self.ns, {"_set_character_source",
+                                  "_restore_last_model"})
+
+    def test_both_saved_keeps_only_whole_project(self):
+        self.app.settings.last_model = str(self.model)
+        self.app.settings.last_blend = str(self.blend)
+        self.app._restore_last_model()
+        self.assertEqual(self.app.vars["blend"].get(), str(self.blend))
+        self.assertEqual(self.app.vars["model"].get(), "",
+                         "旧设置两条都有值时不能都填回来（第四入口）")
+        self.assertEqual(self.app.remembered, [str(self.blend)],
+                         "恢复后要把设置收敛成一条")
+
+    def test_only_model_restores_model_and_clears_blend(self):
+        self.app.vars["blend"].set(r"X:\stale.blend")
+        self.app.settings.last_model = str(self.model)
+        self.app._restore_last_model()
+        self.assertEqual(self.app.vars["model"].get(), str(self.model))
+        self.assertEqual(self.app.vars["blend"].get(), "")
 
 
 if __name__ == "__main__":

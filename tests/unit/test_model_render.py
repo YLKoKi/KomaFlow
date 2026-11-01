@@ -406,8 +406,12 @@ class TestModelRenderKeepsPmx(_WindowCase):
         _pmx, blend = self._files()
         self.app.accept_model_render(blend, [], source_pmx="")
         self.root.update()
-        self.assertEqual(self.app.vars["model"].get(), str(blend),
+        # R06 第三入口：退回整份工程时必须进 blend 字段（并清掉 model），
+        # 否则 _collect_project 会拿 PMX 导入器去读 .blend。
+        self.assertEqual(self.app.vars["blend"].get(), str(blend),
                          "拿不到源 PMX 时只能退回整份工程")
+        self.assertEqual(self.app.vars["model"].get(), "",
+                         "整份工程不能塞进 model —— route 会算错")
 
 
 class TestWholeProjectModeSaysWhatItDrops(_WindowCase):

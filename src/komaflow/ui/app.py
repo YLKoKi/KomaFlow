@@ -515,6 +515,26 @@ class KomaFlowApp:
         self._restore_last_model()
 
     # --------------------------------------------- 角色卡记忆（上次用的模型）
+    def _set_character_source(self, kind: str, path: str = "") -> None:
+        """统一写「角色来源」：PMX（model）与整份 .blend（blend）**互斥**。
+
+        :param kind: ``"model"`` / ``"blend"`` / 其它（= 两条都清空）
+
+        所有入口都必须走这里（拖放、点选、启动恢复、模型渲染回填）——
+        审查 R06 连出三个入口漏清另一条：卡片显示 PMX、_collect_project
+        却仍按旧的 blend 走，实际渲的是旧工程。
+        """
+        kind = kind if kind in ("model", "blend") else ""
+        if kind == "model":
+            self.vars["model"].set(str(path or ""))
+            self.vars["blend"].set("")
+        elif kind == "blend":
+            self.vars["blend"].set(str(path or ""))
+            self.vars["model"].set("")
+        else:
+            self.vars["model"].set("")
+            self.vars["blend"].set("")
+
     def _restore_last_model(self) -> None:
         """启动时把**上次确定用过的**角色模型填回第 1 张卡。
 
@@ -543,23 +563,28 @@ class KomaFlowApp:
             self._log(f"上次用的模型已经不在了：{'、'.join(gone)}", "warn")
             self.vars["status"].set(
                 f"上次用的模型找不到了（{Path(gone[0]).name}），请重新放一个")
-            # 记忆作废 —— 否则每次启动都提示一次
+            # 记忆作废 —— 否则每次启动都提示一次。
+            # 注意：先全部清空，后面选中哪条再由 _remember_model 写回，
+            # 避免旧版留下的"两条都有值"继续存在（审查 R06 第四入口）。
             try:
-                self.settings.last_model = alive_model
-                self.settings.last_blend = alive_blend
+                self.settings.last_model = ""
+                self.settings.last_blend = ""
                 self.settings.save()
             except Exception: # noqa: BLE001 - 存不下也不该影响启动
                 pass
 
-        if alive_model:
-            self.vars["model"].set(alive_model)
-        if alive_blend:
-            self.vars["blend"].set(alive_blend)
-        if alive_model or alive_blend:
-            name = Path(alive_model or alive_blend).name
-            self._log(f"沿用上次的角色：{alive_model or alive_blend}")
-            self.vars["status"].set(f"沿用上次用的角色：{name}")
-            self._refresh_cards()
+        if not alive_model and not alive_blend:
+            return
+        # R06：旧设置可能同时记了 model 与 blend —— 只能留一条。
+        # 优先「整份工程」（它更"完整"：用户上次是拿整份工程渲的）。
+        chosen_kind, chosen = (("blend", alive_blend) if alive_blend
+                               else ("model", alive_model))
+        self._set_character_source(chosen_kind, chosen)
+        self._remember_model(chosen)      # 顺手把设置里的另一条清掉
+        name = Path(chosen).name
+        self._log(f"沿用上次的角色：{chosen}")
+        self.vars["status"].set(f"沿用上次用的角色：{name}")
+        self._refresh_cards()
 
     def _remember_model(self, path: str) -> None:
         """记住"这次确定用哪个角色"（写进设置，下次启动自动填回来）。
@@ -2284,10 +2309,8 @@ class KomaFlowApp:
                         "「是」= 当作整份工程：直接渲它，场景和动作不参与\n"
                         "「否」= 放进「舞台」当场景：角色和动作照常参与")
                 if use_as_whole:
-                    self.vars["blend"].set(path)
-                    # 角色来源互斥：整份工程与 PMX 只能留一个（审查 R06）。
-                    # 否则界面显示新 PMX、_collect_project 却仍按 blend 渲旧工程。
-                    self.vars["model"].set("")
+                    # 角色来源互斥：整份工程与 PMX 只能留一个（审查 R06）
+                    self._set_character_source("blend", path)
                     # 记住"这次确定用这份工程"（下次启动自动填回来）
                     self._remember_model(path)
                     self._log(f"按「已配好的工程」接收：{path}")
@@ -2315,12 +2338,13 @@ class KomaFlowApp:
         if key in ("motion", "expression"):
             self._add_motion_file(path)
             return
-        self.vars[key].set(path)
         if key == "model":
             # 角色来源互斥：选了 PMX 必须清掉「整份工程」，否则
             # _collect_project() 仍按 blend 走 —— 卡片显示新 PMX，
             # 实际渲的却是旧 .blend（审查 R06）。
-            self.vars["blend"].set("")
+            self._set_character_source("model", path)
+        else:
+            self.vars[key].set(path)
         if key == "stage":
             # 加了背景 → 「渲染背景」自动开
             self.transparent.set("开")
@@ -2409,8 +2433,7 @@ class KomaFlowApp:
                 labels.append("角色模型")
             if self.vars["blend"].get().strip():
                 labels.append("整份工程")
-            self.vars["model"].set("")
-            self.vars["blend"].set("")
+            self._set_character_source("", "")
             self._refresh_cards()
             if labels:
                 self._log(f"已清空：{' / '.join(labels)}")
@@ -4682,7 +4705,12 @@ class KomaFlowApp:
         # ⚠️ 先复位卡片状态：上一步可能把卡片画成了"步骤卡"，
         # 不复位的话回填不上去（卡片还停在运行态）。
         self.reset_cards_to_drop()
-        self.vars["model"].set(str(path))
+        # R06 第三入口：这里也必须走统一互斥入口。而且如果退回的是整份 .blend
+        # （拿不到源 PMX），要进 blend 字段——塞进 model 会被 PMX 导入器读。
+        if Path(str(path)).suffix.lower() == ".blend":
+            self._set_character_source("blend", str(path))
+        else:
+            self._set_character_source("model", str(path))
         # 刚渲出来的工程里带着调好的材质观感 —— 记成观感来源，
         # 并把「观感」直接切到卡渲迁移（用户刚渲三视图，显然想要那套观感）。
         if look_blend is not None and look_blend.is_file():
