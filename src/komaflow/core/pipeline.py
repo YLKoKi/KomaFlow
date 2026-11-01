@@ -68,6 +68,14 @@ STAGES: tuple[tuple[str, str], ...] = (
 SEGMENT_TIMEOUT_PER_FRAME = 60.0
 SEGMENT_TIMEOUT_FLOOR = 600.0
 
+#: 渲染/单帧预览的**无进度上限**（秒）。
+#:
+#: 为什么不是 executor 默认的 180 秒：render.py 只在每帧边界写进度，
+#: 一帧内部没有心跳。2K + 复杂材质 + 慢盘时，**单帧合法地跑 3 分钟以上**
+#: 很常见；180 秒会把它当"卡死"杀掉并重试（报告 R05）。
+#: 装配阶段仍用默认值（它按阶段写进度，卡在导入就该早发现）。
+RENDER_STALL_SECONDS = 900.0
+
 
 def _emit(on_event: Callable[[dict], None] | None, event_type: str, **payload) -> None:
     if on_event is None:
@@ -173,6 +181,31 @@ def _render_script_path() -> str:
         return ""
 
 
+def _script_path_or_empty(name: str) -> str:
+    """取适配层脚本路径；取不到返回空串（指纹里就是空值，保守重渲）。"""
+    try:
+        return str(BASELINE.script(name))
+    except Exception: # noqa: BLE001
+        return ""
+
+
+def _build_script_path() -> str:
+    return _script_path_or_empty("build.py")
+
+
+def _apply_look_script_path() -> str:
+    return _script_path_or_empty("apply_look.py")
+
+
+def _vendor_renderer_path() -> str:
+    """内置 MMD 静帧渲染器（观感材质由它决定，改它必须重渲）。"""
+    try:
+        return str(Path(BASELINE.script("build.py")).parent.parent
+                   / "vendor" / "MMD渲染.py")
+    except Exception: # noqa: BLE001
+        return ""
+
+
 def render_fingerprint(project: Project, report: dict) -> str:
     """这次要渲的"内容指纹" —— 素材/参数任何一项变了就不一样。
 
@@ -204,12 +237,16 @@ def render_fingerprint(project: Project, report: dict) -> str:
     params = project.params
 
     def _stamp(path: str) -> list:
-        """文件指纹：路径 + 大小 + 修改时间。读不到就给 None（保守重渲）。"""
+        """文件指纹：路径 + 大小 + 纳秒修改时间。读不到就给 None（保守重渲）。
+
+        ⚠️ 用 ``st_mtime_ns``：只用整秒时，**同一秒内**把同名同大小文件换掉
+        指纹不变（审查 R03 实测 100.0→100.5 秒被截成同一个值）。
+        """
         if not path:
             return []
         try:
             stat = os.stat(path)
-            return [str(path), stat.st_size, int(stat.st_mtime)]
+            return [str(path), stat.st_size, stat.st_mtime_ns]
         except OSError:
             return [str(path), None, None]
 
@@ -219,9 +256,13 @@ def render_fingerprint(project: Project, report: dict) -> str:
         "motions": [_stamp(str(p)) for p in project.inputs.all_motions()],
         "stage": _stamp(str(project.inputs.stage or "")),
         "camera": _stamp(str(project.inputs.camera or "")),
+        # 观感来源（材质迁移的来源工程）——换了它画面就变，必须作废旧段
+        "look_from_blend": _stamp(str(params.look_from_blend or "")),
         # 画面参数
         "size": [params.width, params.height, params.fps],
-        "quality": [params.quality, params.bitrate],
+        "quality": [params.quality, params.bitrate, params.crf],
+        # 构图：景别 / 机位模式直接改变画面（审查 R03：旧指纹漏了它们）
+        "framing": [params.framing, params.camera_mode, params.strip_preroll],
         # 帧范围（含预热）—— 改了范围产物就对不上
         "frames": [report.get("frame_start"), report.get("frame_end")],
         "preroll": params.preroll_frames,
@@ -229,8 +270,13 @@ def render_fingerprint(project: Project, report: dict) -> str:
             # 透明与否决定走 PNG 序列还是 MP4
         "transparent": project.effective_transparent(),
         "codec": project.alpha_codec_name(),
-        # 渲染脚本自身变了也要重渲（例如改了采样、编码参数、进度上报）
+        # 脚本/渲染器自身变了也要重渲（例如改了采样、编码参数、进度上报）。
+        # 审查 R03：只哈希 render.py 不够 —— 装配与观感迁移、vendor 渲染器
+        # 都会改变输出，必须一起进指纹。
         "render_logic": _script_fingerprint(_render_script_path()),
+        "assembly_logic": _script_fingerprint(_build_script_path()),
+        "look_logic": _script_fingerprint(_apply_look_script_path()),
+        "vendor_logic": _script_fingerprint(_vendor_renderer_path()),
     }
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -776,6 +822,7 @@ def _apply_look_migration(report: dict, exe, adapter, work_dir: Path,
         work_dir / "look_spec.json",
         log_path=work_dir / "look.log", timeout=900,
         cancel=cancel, control=control,
+        stall_seconds=RENDER_STALL_SECONDS,
     )
     try:
         look_report = json.loads(
@@ -925,13 +972,50 @@ def _assembly_fingerprint(build_spec: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:32]
 
 
-def _durable_paths(project: Project) -> tuple[Path, Path]:
-    """非临时工程文件的位置（出图目录里，跟成片放一起）。"""
+def _input_blend_paths(project: Project) -> list[Path]:
+    """本次输入里**所有 .blend 文件**（路线 B 工程 / 舞台 / 观感来源）。"""
+    candidates = (project.inputs.blend, project.inputs.stage,
+                  project.params.look_from_blend)
+    paths: list[Path] = []
+    for item in candidates:
+        text = str(item or "").strip()
+        if text and text.lower().endswith(".blend"):
+            paths.append(Path(text))
+    return paths
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """两个路径是否指向同一个文件（Windows 下大小写不敏感）。"""
+    try:
+        left = os.path.normcase(str(a.resolve()))
+        right = os.path.normcase(str(b.resolve()))
+    except OSError:
+        left = os.path.normcase(os.path.abspath(str(a)))
+        right = os.path.normcase(os.path.abspath(str(b)))
+    return left == right
+
+
+def _durable_paths(project: Project) -> tuple[Path, Path, str | None]:
+    """非临时工程文件的位置（出图目录里，跟成片放一起）。
+
+    ⚠️ **绝不能等于本次的输入 .blend**（审查 R02）：用户把上次导出的工程
+    手工改过、又拿它当路线 B 输入、输出目录/名字照旧时，装配完的 ``copy2``
+    会把**用户改过的原文件直接覆盖**掉。检测到同名就另存成「…（工具工程）.blend」，
+    并返回冲突的输入路径供调用方记日志。
+
+    返回值：``(工程路径, 指纹路径, 被避开的输入路径或 None)``
+    """
     out_dir = Path(project.output.dir)
     name = safe_basename(project.output.basename)
     safe = _safe_filename(name)
     blend = out_dir / f"{safe}.blend"
-    return blend, blend.with_suffix(".blend.json")
+    avoided: str | None = None
+    for input_blend in _input_blend_paths(project):
+        if _same_file(blend, input_blend):
+            avoided = str(input_blend)
+            blend = out_dir / f"{safe}（工具工程）.blend"
+            break
+    return blend, blend.with_suffix(".blend.json"), avoided
 
 
 def _prepare_and_assemble(
@@ -1034,7 +1118,11 @@ def _prepare_and_assemble(
     # 用户要求：「确认开始渲染，先把文件存下来（非临时），之后在文件里分段渲，
     # 不用重跑物理」。所以装配完就把它复制到**出图目录**，并在旁边放一份指纹，
     # 下次（包括只改渲染区间）直接用它，不再 build_rig / 烘焙。
-    durable_blend, durable_key = _durable_paths(project)
+    durable_blend, durable_key, avoided_input = _durable_paths(project)
+    if avoided_input:
+        _emit(on_event, "log", level="warn",
+              message=(f"输出工程与输入文件同名（{avoided_input}），"
+                       f"为免覆盖你的原件，另存为：{durable_blend.name}"))
     assembly_key = _assembly_fingerprint(build_spec)
 
     if durable_blend.is_file() and durable_key.is_file():
@@ -1437,6 +1525,8 @@ def render_still(
     run_blender_script(
         exe, adapter.script("render.py"), spec, work_dir / "still_spec.json",
         log_path=work_dir / "still.log", timeout=900, cancel=cancel, control=control,
+        # 单帧也可能合法地跑很久（2K + 复杂场景）：不能按 180 秒判死（R05）
+        stall_seconds=RENDER_STALL_SECONDS,
     )
 
     if not output.is_file():
@@ -1571,6 +1661,8 @@ def _render_one_segment(
             on_progress=on_progress,
             cancel=cancel,
             control=control,
+            # 渲染只在每帧边界写进度：长单帧不能被 180 秒心跳误杀（R05）
+            stall_seconds=RENDER_STALL_SECONDS,
         )
 
         if cancel is not None and cancel.is_set():

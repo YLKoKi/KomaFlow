@@ -80,6 +80,7 @@ def run_blender_script(
     cancel=None,
     control=None,
     poll_interval: float = POLL_INTERVAL,
+    stall_seconds: float | None = None,
 ) -> ScriptOutcome:
     """跑一个 Blender 侧脚本，并在运行期间监视进度文件。
 
@@ -87,6 +88,9 @@ def run_blender_script(
     :param control: 可选的 :class:`~komaflow.adapters.proc.ProcessControl`，
         用来挂起 / 恢复渲染进程（"暂停"）
     :param on_progress: 每次进度文件更新时回调，参数是解析后的 dict
+    :param stall_seconds: 多久没进度算"卡死"（默认 :data:`STALL_SECONDS`）。
+        渲染/单帧预览要传更大的值 —— 它们只在**每帧边界**写进度，
+        一帧合法地跑很久时不能按装配的心跳标准判死（审查 R05）。
     """
     exe = Path(exe)
     script = Path(script)
@@ -126,6 +130,8 @@ def run_blender_script(
         stdout_target = log_handle
 
     progress_file = Path(progress_path) if progress_path else None
+    #: 心跳阈值：默认 180 秒；渲染/预览调用方会传更大的值（R05）
+    stall_limit = float(stall_seconds) if stall_seconds else STALL_SECONDS
     last_progress_stamp: float | None = None
     last_progress_change = time.time()
     # 🚨 首次进度之前的宽限。
@@ -136,7 +142,7 @@ def run_blender_script(
     # 一旦卡在那里，看门狗形同虚设，界面就永远挂着。
     # 现在从进程启动就开始计时，只是首次进度前给 3 倍宽限
     # （大模型导入 + 慢盘确实可能慢，但不会慢到 9 分钟）。
-    first_progress_grace = STALL_SECONDS * 3
+    first_progress_grace = stall_limit * 3
 
     started = time.time()
     outcome = ScriptOutcome(returncode=-1, log_path=log_path)
@@ -194,7 +200,7 @@ def run_blender_script(
 
                 # 心跳：长时间没有进度就认为无响应（含"从没出现过进度"这种情况）
                 if progress_file is not None:
-                    limit = (STALL_SECONDS if last_progress_stamp is not None
+                    limit = (stall_limit if last_progress_stamp is not None
                              else first_progress_grace)
                     if (now - last_progress_change) > limit:
                         outcome.stalled = True
