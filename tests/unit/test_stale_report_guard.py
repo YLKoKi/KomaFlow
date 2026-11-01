@@ -221,21 +221,22 @@ class ProjectUsableBakeCheckTests(unittest.TestCase):
 
 
 class FFmpegFetchSourcesTests(unittest.TestCase):
-    """下载源顺序与白名单：钉死版本在前，直连次之，镜像最后。"""
+    """下载源：钉死版本在前，只转发同一版本的镜像在后（R01 起不再有免校验源）。"""
 
     def test_sources_order_pinned_first_mirrors_last(self):
         from komaflow.media import ffmpeg_fetch as ff
 
         urls = ff.sources()
         pinned_url = ff._PINNED_SOURCES[0][0]
-        direct = ff._GH_ASSET
-        mirrored = ff._MIRROR_PREFIXES[0] + ff._GH_ASSET
         self.assertEqual(urls[0], pinned_url, "钉死版本必须排第一")
-        self.assertLess(urls.index(direct), urls.index(mirrored),
-                        "直连必须在镜像之前")
-        # 白名单里的每个镜像域名都各有一个变体
-        for prefix in ff._MIRROR_PREFIXES:
-            self.assertIn(prefix + ff._GH_ASSET, urls)
+        # 镜像只改传输地址，内容与摘要都必须和钉死版本一致
+        for prefix in ff._PINNED_MIRROR_PREFIXES:
+            variant = prefix + pinned_url
+            self.assertIn(variant, urls)
+            self.assertGreater(urls.index(variant), 0, "镜像不能排第一个")
+            self.assertEqual(ff._SHA256_BY_URL[variant],
+                             ff._SHA256_BY_URL[pinned_url],
+                             "镜像必须对应同一个钉死版本的摘要")
 
     def test_check_url_rejects_non_https_and_unknown_hosts(self):
         from komaflow.media import ffmpeg_fetch as ff
