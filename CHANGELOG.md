@@ -1,7 +1,30 @@
 # 更新日志
 
-> 当前版本 **V1.2.1**。历史版本里的 `-beta` 是当时的测试版标记，保留不改。
+> 当前版本 **V1.2.2**。历史版本里的 `-beta` 是当时的测试版标记，保留不改。
 > 最新版本见 `src/komaflow/branding.py` 的 `APP_VERSION`。
+
+## V1.2.2 — 2026-11-02
+
+> **物理诊断 hotfix：不含新功能。**
+
+一句话：修物理链路里"看着在跑、其实没挂上 / 没烘上"的问题，并把物理计数与日志摊开，出问题能直接看出断在哪一段。
+
+### 修了（物理）
+
+- **ROOT 选择不再乱猜**：目标 ROOT 不再回退 `arm.parent`；找不到明确 ROOT 时按 `skipped` 处理，不再挂到错误对象上。
+- **刚体计数只看目标 ROOT 子树**：以场景作上下文统计目标子树，舞台 / 配件的物理不再掩盖角色本身"0 刚体"。
+- **三段日志**：`build` 前 / `build` 后 / `bake` 后各打一次刚体、关节、rigid track、约束数，一眼看出断在哪段。
+- **拒绝空烤**：`0 刚体 / 0 rigid tracks` 时不再烘焙，直接报错并说明原因。
+- **无骨架 / 无 ROOT 走 skipped**：不再抛异常，日志写明"跳过物理"及原因。
+
+### 测试
+
+- 真实 Blender headless 测试通过。
+
+### 证据
+
+- 单元测试：`Ran 434 tests — OK (skipped=3)`，0 fail / 0 error（2026-11-02 实跑，命令见 README）。
+- 发布包已出：`KomaFlow_V1.2.2.zip`，**12,913,175 B / 1060 条目**（SHA256 见 Release 说明）。
 
 ## V1.2.1 — 2026-11-02
 
@@ -94,7 +117,7 @@
 - 真机 headless 冒烟：装配 + 出片通过 —— `build_report.json`（ok=true、3 帧）、
   3 张 PNG 落盘、`result.ok=True`、无 AttributeError（640×360、PNG 序列、3 帧）。
 - 能力包 / vendor：0 改动（`pkg-unchanged.diff`）。
-- 待发布包：`KomaFlow_V1.2.0.zip`（体积与 SHA256 以 Release 说明为准）；
+- 发布包：`KomaFlow_V1.2.0.zip`，13,213,199 B / 1060 条目（SHA256 见 Release 说明）；
   此前构建的 beta 包内含这条 P0（`build.py` 是坏的），已作废。
 - 透明 MOV 端到端：90 帧 640×360、ProRes 4444 + alpha，全片解码通过
   （ffprobe：`prores` / `yuva444p12le` / 90 帧 / 3.0 秒）。
