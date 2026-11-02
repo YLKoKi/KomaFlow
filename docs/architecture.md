@@ -4,7 +4,7 @@
 > **当前状态**：装配 / 预热 / 分段渲染已实测；透明 MOV（90 帧）与 PNG 序列已验证；
 > **普通 MP4（H.264）编码路径本版未复测**（由用户实际渲染时验证）。
 > 界面已可用，但只做过 **150% 缩放的单次冒烟**（100% / 125% 与多窗口尺寸尚未系统性验证）。
-> 打包已出 **V1.2.1**（`release/KomaFlow_V1.2.1.zip`，待发布）；第三方许可见 `第三方来源与许可_发布版.md`。
+> 打包流程已通（V1.2.0 已出包）；**V1.2.1 发布包为 `KomaFlow_V1.2.1.zip`**（出包后体积/SHA 见 Release 说明）；第三方许可见 `第三方来源与许可_发布版.md`。
 > K-1.8 已定论，见第 11 节。
 
 ---
@@ -281,7 +281,7 @@ Blender 侧脚本在 `bpy.app.handlers.render_post` 里每 25~30 帧覆写一次
 | PNG 序列 / 透明 MOV 导出 | ✅ **已实现并实测**（90 帧 640×360、ProRes 4444 + alpha，全解码通过） |
 | 角色模板存档（K-4）、骨骼手动映射（FR-2.2） | 待做；当前会对失配骨骼给出清单，但不提供手动补齐 |
 | LICENSE / CHANGELOG / CONTRIBUTING | LICENSE=MIT、CHANGELOG 已建；CONTRIBUTING 未建 |
-| 打包成 EXE | ✅ **已出 V1.2.1**（`release/KomaFlow_V1.2.1.zip`，待发布；PyInstaller onedir、zip 根级布局） |
+| 打包成 EXE | ✅ 打包流程已通（V1.2.0 已出包）；**V1.2.1 待出** `KomaFlow_V1.2.1.zip`（PyInstaller onedir、zip 根级布局） |
 
 ---
 
