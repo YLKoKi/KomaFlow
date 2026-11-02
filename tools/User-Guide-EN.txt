@@ -1,4 +1,4 @@
-KomaFlow V1.2.0 — User Guide (English)
+KomaFlow V1.2.1 — User Guide (English)
 ===========================================
 
 Release: interfaces and defaults are stable in this version.
