@@ -137,12 +137,13 @@ class PhysicsCountsTests(unittest.TestCase):
             data=SimpleNamespace(objects=_Objects(objects)),
             context=SimpleNamespace(scene=_Scene(_world(collection))),
         )
-        return _load({"_physics_counts"},
+        return _load({"_iter_descendants", "_subtree_objects", "_physics_counts"},
                      {"bpy": bpy,
+                      "_log": lambda *a, **k: None,
                       "_target_armature": lambda: arm,
                       "_mmd_root_object": lambda: root})
 
-    def test_counts_rigidbodies_joints_collection_tracks_constraints(self):
+    def _fixture(self):
         body1 = _Obj("b1", rigid_body=object())
         body2 = _Obj("b2", rigid_body=object())
         body3 = _Obj("b3", rigid_body=object())
@@ -151,24 +152,50 @@ class PhysicsCountsTests(unittest.TestCase):
                         _Constraint("mmd_tools_rigid_track"),
                         _Constraint("other")])]
         arm = _Obj("Arm", type_="ARMATURE", bones=bones)
-        root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True)
-        ns = self._ns([body1, body2, body3, joint, arm], arm, root,
-                      [body1, body2])
+        root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True,
+                    children=[body1, body2, body3, joint, arm])
+        stage_body = _Obj("stage_body", rigid_body=object())
+        return dict(body1=body1, body2=body2, body3=body3, joint=joint,
+                    arm=arm, root=root, stage_body=stage_body)
+
+    def test_counts_target_subtree_and_scene_context(self):
+        """T-39：目标计数只算 ROOT 子树；scene 刚体/关节另作上下文。"""
+        f = self._fixture()
+        objects = [f["stage_body"], f["root"], f["body1"], f["body2"],
+                   f["body3"], f["joint"], f["arm"]]
+        ns = self._ns(objects, f["arm"], f["root"],
+                      [f["body1"], f["stage_body"]])
 
         counts = ns["_physics_counts"]()
         self.assertEqual(counts["rigidbodies"], 3)
         self.assertEqual(counts["joints"], 1)
-        self.assertEqual(counts["collection_bodies"], 2)
+        self.assertEqual(counts["collection_bodies"], 1,
+                         "collection 计数也要限定目标子树（舞台刚体不算）")
         self.assertEqual(counts["rigid_tracks"], 2)
         self.assertEqual(counts["constraints"], 3)
+        self.assertEqual(counts["scene_rigidbodies"], 4,
+                         "scene 上下文要包含舞台刚体")
+        self.assertEqual(counts["scene_joints"], 1)
         self.assertEqual(counts["armature"], "Arm")
         self.assertEqual(counts["root"], "Root")
         self.assertIs(counts["is_built"], True)
 
+    def test_root_none_target_counts_zero_but_scene_context_kept(self):
+        f = self._fixture()
+        ns = self._ns([f["stage_body"], f["arm"]], f["arm"], None,
+                      [f["stage_body"]])
+        counts = ns["_physics_counts"]()
+        self.assertEqual(counts["rigidbodies"], 0)
+        self.assertEqual(counts["joints"], 0)
+        self.assertEqual(counts["rigid_tracks"], 0)
+        self.assertEqual(counts["constraints"], 0)
+        self.assertEqual(counts["scene_rigidbodies"], 1)
+        self.assertIsNone(counts["root"])
+
 
 # ------------------------------------------------------------ ③ 空烤拒绝
 class EmptyBakeGuardTests(unittest.TestCase):
-    def _run_bake(self, objects, arm, root, counts_people):
+    def _run_bake(self, objects, arm, root, build_rig=None, collection=()):
         calls = {"bake": 0}
 
         def fake_ops():
@@ -178,7 +205,7 @@ class EmptyBakeGuardTests(unittest.TestCase):
         bpy = SimpleNamespace(
             data=SimpleNamespace(objects=_Objects(objects)),
             context=SimpleNamespace(
-                scene=_Scene(_world()),
+                scene=_Scene(_world(list(collection))),
                 view_layer=SimpleNamespace(update=lambda: None),
                 selected_objects=[],
             ),
@@ -186,11 +213,12 @@ class EmptyBakeGuardTests(unittest.TestCase):
                 mmd_tools=SimpleNamespace(
                     ptcache_rigid_body_bake=fake_ops)),
         )
-        ns = _load({"_physics_counts", "_bake_physics"}, {
+        ns = _load({"_iter_descendants", "_subtree_objects", "_physics_counts",
+                    "_bake_physics"}, {
             "bpy": bpy,
             "_target_armature": lambda: arm,
             "_mmd_root_object": lambda: root,
-            "_build_rig": counts_people,
+            "_build_rig": build_rig or (lambda: {}),
             "_motion_span": lambda: None,
             "_ensure_physics_collection": lambda: 0,
             "_progress": lambda *a, **k: None,
@@ -200,24 +228,80 @@ class EmptyBakeGuardTests(unittest.TestCase):
         })
         return ns["_bake_physics"]({"frame_end": 10}), calls
 
-    def test_zero_rigidbodies_skips_bake(self):
+    def test_zero_target_bodies_skips_bake(self):
         arm = _Obj("Arm", type_="ARMATURE")
         root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True)
-        result, calls = self._run_bake([], arm, root, lambda: {})
+        result, calls = self._run_bake([], arm, root)
         self.assertEqual(result.get("reason"), "no-rigid-bodies")
         self.assertIn("skipped", result)
         self.assertEqual(result["counts"]["rigidbodies"], 0)
         self.assertEqual(calls["bake"], 0, "0 刚体不许调用烘焙操作符")
 
+    def test_stage_physics_does_not_mask_empty_character(self):
+        """舞台有刚体、角色没有：目标子树计数为 0，仍必须拒烤。"""
+        stage_body = _Obj("stage_body", rigid_body=object())
+        arm = _Obj("Arm", type_="ARMATURE")
+        root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True)  # 无角色刚体
+        result, calls = self._run_bake([stage_body, root, arm], arm, root,
+                                       collection=[stage_body])
+        self.assertIn("skipped", result)
+        self.assertEqual(result.get("reason"), "no-rigid-bodies")
+        self.assertEqual(result["counts"]["rigidbodies"], 0)
+        self.assertEqual(result["counts"]["scene_rigidbodies"], 1,
+                         "scene 上下文能看到舞台刚体，但目标计数不能")
+        self.assertEqual(calls["bake"], 0, "舞台刚体不能掩盖角色无物理")
+
     def test_zero_rigid_tracks_is_an_error_and_skips_bake(self):
         body = _Obj("b1", rigid_body=object())
         arm = _Obj("Arm", type_="ARMATURE", bones=[_Bone([])])
-        root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True)
-        result, calls = self._run_bake([body, arm], arm, root, lambda: {})
+        root = _Obj("Root", mmd_type="ROOT", mmd_is_built=True,
+                    children=[body, arm])
+        result, calls = self._run_bake([body, arm, root], arm, root)
         self.assertIn("error", result)
         self.assertEqual(result.get("reason"), "no-rigid-tracks")
         self.assertEqual(result["counts"]["rigid_tracks"], 0)
         self.assertEqual(calls["bake"], 0, "build_rig 没建出 tracks 不许烘焙")
+
+    def test_no_armature_is_skipped_not_physics_failure(self):
+        body = _Obj("b1", rigid_body=object())
+        result, calls = self._run_bake([body], None, None)
+        self.assertIn("skipped", result)
+        self.assertEqual(result.get("reason"), "no-armature")
+        self.assertNotIn("error", result)
+        self.assertEqual(calls["bake"], 0)
+
+    def test_no_root_is_skipped_not_physics_failure(self):
+        body = _Obj("b1", rigid_body=object())
+        arm = _Obj("Arm", type_="ARMATURE", bones=[_Bone([])])
+        result, calls = self._run_bake([body, arm], arm, None)
+        self.assertIn("skipped", result)
+        self.assertEqual(result.get("reason"), "no-root")
+        self.assertNotIn("error", result)
+        self.assertEqual(calls["bake"], 0)
+
+
+class BuildRigRootFallbackTests(unittest.TestCase):
+    def _run_build_rig(self, arm, root):
+        bpy = SimpleNamespace(context=SimpleNamespace(selected_objects=[]))
+        ns = _load({"_build_rig"}, {
+            "bpy": bpy,
+            "_target_armature": lambda: arm,
+            "_mmd_root_object": lambda: root,
+            "_log": lambda *a, **k: None,
+        })
+        return ns["_build_rig"]()
+
+    def test_no_armature_skipped_with_reason(self):
+        result = self._run_build_rig(None, None)
+        self.assertEqual(result.get("reason"), "no-armature")
+
+    def test_no_root_skipped_and_does_not_fallback_to_arm_parent(self):
+        arm = _Obj("Arm", type_="ARMATURE",
+                   parent=_Obj("MeshParent", type_="MESH"))
+        result = self._run_build_rig(arm, None)
+        self.assertIn("skipped", result)
+        self.assertEqual(result.get("reason"), "no-root",
+                         "没有 ROOT 时不能拿 arm.parent 去 build")
 
 
 if __name__ == "__main__":

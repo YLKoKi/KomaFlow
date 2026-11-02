@@ -219,13 +219,15 @@ def _build_rig() -> dict:
     """
     arm = _target_armature()
     if arm is None:
-        return {"skipped": "场景里没有骨架"}
+        return {"skipped": "场景里没有骨架", "reason": "no-armature"}
 
     # 根对象 = 带 mmd_root 的那个（一般是骨架的父级空物体）。
     # ⚠️ 必须选它：选骨架调 build_rig 会 poll() failed。
+    # ⚠️ T-39：**不再回退 arm.parent** —— 那可能是网格/普通空物体，build 错对象。
     root = _mmd_root_object()
     if root is None:
-        root = arm.parent or arm
+        _log("build_rig 跳过：找不到 MMD ROOT（没有可 build 的目标）")
+        return {"skipped": "找不到 ROOT", "reason": "no-root", "is_built": False}
 
     # 🚨 **不要重复 build**：每 build 一次就会再堆一批非碰撞距离约束（211 → 3623 → 更多）。
     # 《物理接入说明》硬约束 2：is_built=True 就跳过。
@@ -296,21 +298,39 @@ def _ensure_physics_collection() -> int:
     return added
 
 
-def _physics_counts() -> dict:
-    """数当前场景的物理结构（T-36 诊断：不看“操作符说成功”，只看结构）。
+def _subtree_objects(root) -> list:
+    """ROOT 自身 + 所有后代（T-39 目标子树）。root 为 None 时返回空。"""
+    if root is None:
+        return []
+    return [root, *_iter_descendants(root)]
 
-    返回：``rigidbodies``（带 ``rigid_body`` 的对象）、``joints``（带
-    ``rigid_body_constraint`` 的对象）、``collection_bodies``（物理世界集合里的
-    刚体数）、``rigid_tracks``（目标骨架上的 mmd_tools rigid_track 约束）、
-    ``constraints``（目标骨架约束总数）、``armature`` / ``root``（名字）、
-    ``is_built``（root.mmd_root.is_built）。
+
+def _physics_counts() -> dict:
+    """数物理结构：**目标 ROOT 子树**统计 + scene 全局作上下文（T-39）。
+
+    ⚠️ 不能只数全场景：先导舞台再导人物时，舞台的刚体会把"角色没有物理"
+    掩盖成"刚体 > 0" → build 后照样去烘焙，烤的是舞台（或空缓存）。
+    目标计数只算 root 及其后代；目标骨架不在子树里时 tracks/constraints 记 0。
+
+    返回字段：
+    ``rigidbodies`` / ``joints`` / ``collection_bodies`` / ``rigid_tracks`` /
+    ``constraints``（目标子树）；``scene_rigidbodies`` / ``scene_joints``（上下文）；
+    ``armature`` / ``root`` / ``is_built``。
 
     任何一步读不到都按 0/None，绝不因为诊断把装配弄崩。
     """
     scene = bpy.context.scene
-    bodies = [o for o in bpy.data.objects
-              if getattr(o, "rigid_body", None) is not None]
-    joints = [o for o in bpy.data.objects
+    arm = _target_armature()
+    root = _mmd_root_object()
+    subtree = _subtree_objects(root)
+    subtree_ids = {id(obj) for obj in subtree}
+
+    scene_bodies = [o for o in bpy.data.objects
+                    if getattr(o, "rigid_body", None) is not None]
+    scene_joints = [o for o in bpy.data.objects
+                    if getattr(o, "rigid_body_constraint", None) is not None]
+    bodies = [o for o in subtree if getattr(o, "rigid_body", None) is not None]
+    joints = [o for o in subtree
               if getattr(o, "rigid_body_constraint", None) is not None]
 
     collection_bodies = 0
@@ -320,15 +340,16 @@ def _physics_counts() -> dict:
         try:
             collection_bodies = sum(
                 1 for o in coll.objects
-                if getattr(o, "rigid_body", None) is not None)
+                if id(o) in subtree_ids
+                and getattr(o, "rigid_body", None) is not None)
         except Exception: # noqa: BLE001
             collection_bodies = 0
 
-    arm = _target_armature()
     tracks = 0
     constraints = 0
-    pose = getattr(arm, "pose", None) if arm is not None else None
-    if pose is not None:
+    arm_in_subtree = arm is not None and id(arm) in subtree_ids
+    if arm_in_subtree:
+        pose = getattr(arm, "pose", None)
         for bone in list(getattr(pose, "bones", None) or []):
             items = list(getattr(bone, "constraints", None) or [])
             constraints += len(items)
@@ -336,7 +357,13 @@ def _physics_counts() -> dict:
                 1 for c in items
                 if str(getattr(c, "name", "")).startswith("mmd_tools_rigid_track"))
 
-    root = _mmd_root_object()
+    if root is None:
+        _log("物理计数：没有 ROOT → 目标子树为空、目标计数按 0；"
+             f"scene 刚体 {len(scene_bodies)} / 关节 {len(scene_joints)}")
+    elif not arm_in_subtree:
+        _log(f"物理计数：目标骨架不在 ROOT 子树里（root={getattr(root, 'name', None)}，"
+             f"arm={getattr(arm, 'name', None)}）→ tracks/constraints 按 0")
+
     is_built = bool(getattr(getattr(root, "mmd_root", None), "is_built", False)) \
         if root is not None else False
     return {
@@ -345,6 +372,8 @@ def _physics_counts() -> dict:
         "collection_bodies": collection_bodies,
         "rigid_tracks": tracks,
         "constraints": constraints,
+        "scene_rigidbodies": len(scene_bodies),
+        "scene_joints": len(scene_joints),
         "armature": getattr(arm, "name", None) if arm is not None else None,
         "root": getattr(root, "name", None) if root is not None else None,
         "is_built": is_built,
@@ -380,6 +409,13 @@ def _bake_physics(spec: dict) -> dict:
         return {"skipped": "没有刚体世界（模型不带物理）",
                 "reason": "no-rigidbody-world", "counts": counts_before}
 
+    # T-39：无骨架/无 ROOT 都只是“没得烤”，不是失败（不要 PHYSICS_FAILED）
+    arm = _target_armature()
+    if arm is None:
+        _log("拒绝烘焙：场景里没有骨架（no-armature）")
+        return {"skipped": "场景里没有骨架，未烘焙", "reason": "no-armature",
+                "counts": counts_before}
+
     # 「装载完动作之后再打开物理，然后烘焙」—— 用户指定的顺序。
     # 动作已经在场景里，先把帧拉回 0，让姿势回到初始，再 build_rig。
     scene.frame_set(0)
@@ -393,28 +429,38 @@ def _bake_physics(spec: dict) -> dict:
     # 🚨 **没 build 就烘焙 = 烤一份坏结果，而且会存进 .blend，之后救不回来。**
     # 《物理接入说明》硬约束 3：要烤就烤在 build 之后；装配清单第 4 条要求断言。
     root = _mmd_root_object()
-    if root is not None and not getattr(root.mmd_root, "is_built", False):
+    if root is None:
+        _log("拒绝烘焙：找不到 MMD ROOT（no-root）")
+        return {"skipped": "找不到 MMD ROOT，未烘焙", "reason": "no-root",
+                "is_built": False,
+                "counts": counts_build, "counts_before": counts_before}
+    if not getattr(root.mmd_root, "is_built", False):
         _log("拒绝烘焙：mmd_root.is_built 还是 False（说明没做过 build_rig）")
         return {"skipped": "没 build 过，拒绝烘焙",
                 "is_built": False, "reason": "physics-not-built",
                 "counts": counts_build, "counts_before": counts_before}
 
-    # 🚨 T-36：build 完还是 0 刚体 / 0 rigid_track，说明物理根本没建立。
-    # 这时**不许烘、不许报“烘焙完成”**（否则就是 1.3 秒假成功 + 用户以为物理没了）。
+    # 🚨 T-36/T-39：build 完目标**子树**还是 0 刚体 / 0 rigid_track，说明角色物理
+    # 根本没建立。这时**不许烘、不许报“烘焙完成”**。
+    # 注意 counts_build 是“目标 ROOT 子树”计数，舞台的刚体不会把它掩盖掉。
     if counts_build["rigidbodies"] == 0:
-        _log("拒绝烘焙：模型没有刚体数据（0 个），物理不可能生效")
-        return {"skipped": "模型无物理数据（刚体 0 个），未烘焙",
+        scene_hint = ""
+        if counts_build.get("scene_rigidbodies"):
+            scene_hint = (f"（场景里另有 {counts_build['scene_rigidbodies']} 个刚体，"
+                          "可能属于舞台/其他模型，不属于目标角色）")
+        _log(f"拒绝烘焙：目标角色没有刚体（0 个）{scene_hint}，物理不可能生效")
+        return {"skipped": f"目标角色无物理数据（刚体 0 个）{scene_hint}，未烘焙",
                 "reason": "no-rigid-bodies",
                 "is_built": counts_build["is_built"],
                 "counts": counts_build, "counts_before": counts_before}
     if counts_build["rigid_tracks"] == 0:
-        _log("拒绝烘焙：build_rig 后 rigid_track 仍为 0（物理未建立）—— 视为 build_rig 失败")
+        _log("拒绝烘焙：build_rig 后目标骨架 rigid_track 仍为 0（物理未建立）"
+             "—— 视为 build_rig 失败")
         return {"error": "物理未建立：build_rig 后 rigid_track 仍为 0",
                 "reason": "no-rigid-tracks",
                 "is_built": counts_build["is_built"],
                 "counts": counts_build, "counts_before": counts_before}
 
-    arm = _target_armature()
     if arm is not None:
         for obj in bpy.context.selected_objects:
             obj.select_set(False)
