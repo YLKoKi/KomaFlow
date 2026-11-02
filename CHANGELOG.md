@@ -42,7 +42,7 @@
 
 - 单元测试：`Ran 422 tests — OK (skipped=3)`，0 fail / 0 error（2026-11-01 实跑，命令见 README）。
 - QA 回归：19 条逐条 PASS；R06 经审查指出后补修并复测 CLOSED；审查结论 **P0=0 / P1=0**。
-- 待发布包：`KomaFlow_V1.2.1.zip`（体积与 SHA256 出包后见 Release 说明）。
+- 发布包已出：`KomaFlow_V1.2.1.zip`，**12,912,617 B / 1060 条目**（SHA256 见 Release 说明）。
 
 ### 注意（可能影响你）
 
