@@ -78,11 +78,16 @@ class RootObjectTests(unittest.TestCase):
         self.assertIs(ns["_mmd_root_object"](), char_root,
                       "多模型场景取了舞台的 ROOT，build_rig 会构错对象")
 
-    def test_root_falls_back_to_armature_parent_without_root_marker(self):
+    def test_no_root_marker_returns_none_not_arm_parent(self):
+        """T-36 改了契约：没有 ROOT 时返回 None，**不再**回退 arm.parent。
+
+        回退 arm.parent 可能是网格/普通空物体，拿它当 mmd_root 会 build 到错对象
+        （R13 回归点）。后代包含骨架的 ROOT 由 T-36 的新测试覆盖。
+        """
         plain = _Obj("PlainParent")
         arm = _Obj("Arm", type_="ARMATURE", parent=plain)
         ns = self._namespace([arm], recent="Arm")
-        self.assertIs(ns["_mmd_root_object"](), plain)
+        self.assertIsNone(ns["_mmd_root_object"]())
 
 
 # --------------------------------------------------------------------- R14
