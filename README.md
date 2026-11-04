@@ -6,7 +6,7 @@
 > **直接下载（Windows 程序包）** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
 > ⚠️ 请不要用绿色的 `Code → Download ZIP`：那是**源码**，里面没有 exe。
-> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.3.zip`，**约 12.3 MB（体积以 Releases 页面为准）**）。
+> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.3.zip`，**约 12.3 MB（12,924,873 字节）**）。
 
 
 > English: [README.en.md](README.en.md)
@@ -85,7 +85,7 @@ src/komaflow/                      程序本体
   adapters/                        调 Blender、调 FFmpeg
   adapters/vendor/                 MMD 静帧渲染器（MIT，见同目录 LICENSE / NOTICE）
   ui/                              Tk 界面
-tests/                             465 项单元测试（实跑通过，3 项按设计跳过）
+tests/                             467 项单元测试（实跑通过，3 项按设计跳过）
 tools/                             打包（PyInstaller spec）、LOGO 生成、资源导出
 docs/                              架构说明、使用细节
 ```
