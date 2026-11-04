@@ -4,14 +4,14 @@
 >
 > Do not use the green `Code → Download ZIP` button — that is the **source code**
 > and contains no executable. The app is the asset on the **Releases** page
-> (`KomaFlow_V1.2.2.zip`, **~12.3 MB (12,913,175 bytes)**).
+> (`KomaFlow_V1.2.3.zip`, **~12.3 MB (see the Releases page for the exact size)**).
 
 
 Turn MMD models (`.pmx`) and motions (`.vmd`) into a finished video — by driving
 the **Blender you already have installed**. The app assembles the scene, builds
 and bakes physics, renders in segments, then muxes the result with FFmpeg.
 
-Windows desktop app (not a Blender add-on). **V1.2.2**.
+Windows desktop app (not a Blender add-on). **V1.2.3**.
 
 > 中文说明见 [README.md](README.md)。界面默认中文，可单独下载英文语言包
 > 切换为英文（见 [English-UI-Guide](#english-ui)）。
@@ -40,7 +40,7 @@ Windows desktop app (not a Blender add-on). **V1.2.2**.
 
 **Release build**
 
-1. Download `KomaFlow_V1.2.2.zip` from Releases and extract it
+1. Download `KomaFlow_V1.2.3.zip` from Releases and extract it
 2. Run `KomaFlow.exe`
 3. Drop a `.pmx` into Character, a `.vmd` into Motion, click Start Render
 
@@ -85,7 +85,7 @@ src/komaflow/            application
   adapters/              Blender and FFmpeg drivers
   adapters/vendor/       MMD still renderer (MIT, see LICENSE / NOTICE)
   ui/                    Tk interface
-tests/                   434 unit tests (actually run; 3 skipped by design)
+tests/                   455 unit tests (actually run; 3 skipped by design)
 tools/                   PyInstaller spec, packaging, asset generators
 docs/                    architecture and usage notes (Chinese)
 ```
