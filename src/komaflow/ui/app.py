@@ -2286,6 +2286,9 @@ class KomaFlowApp:
 
         用户不需要理解"路线"，拖哪儿就是哪个意思。
         """
+        if key in ("model", "blend"):
+            # 用户手动换角色来源 → 取消之前「仅外观」的许可（T-50）
+            self._allow_no_physics = False
         if os.path.splitext(path)[1].lower() == ".blend":
             if key == "stage":
                 self.vars["stage"].set(path)
@@ -2434,6 +2437,7 @@ class KomaFlowApp:
             if self.vars["blend"].get().strip():
                 labels.append("整份工程")
             self._set_character_source("", "")
+            self._allow_no_physics = False
             self._refresh_cards()
             if labels:
                 self._log(f"已清空：{' / '.join(labels)}")
@@ -3761,6 +3765,8 @@ class KomaFlowApp:
         look = str(getattr(self.settings, "last_look_blend", "") or "")
         if look and Path(look).is_file():
             params.look_from_blend = look
+        # T-50：只有「继续」弹窗里明确选过“仅外观”才允许 .blend 无物理继续
+        params.allow_no_physics = bool(getattr(self, "_allow_no_physics", False))
         return project
 
     # ---------------------------------------------------------- 日志 / 状态
@@ -4682,6 +4688,9 @@ class KomaFlowApp:
         # 源 PMX 只在两种情况下留着用：没有 .blend，或者用户直接拖了 PMX。
         pmx_candidate = Path(source_pmx) if source_pmx else None
         blend_candidate = Path(path) if Path(path).suffix.lower() == ".blend" else None
+        pmx_ok = pmx_candidate is not None and pmx_candidate.is_file()
+        blend_ok = blend_candidate is not None and blend_candidate.is_file()
+        appearance_only = False
         # 🚨 **优先用源 PMX，不是那份 .blend。**
         #
         # 用户报的原话：「动作导进去出来动作消失了，场景导进去出来场景消失了」。
@@ -4689,15 +4698,29 @@ class KomaFlowApp:
         # 而角色卡一旦是 .blend，整条流程就切到「整份工程」路线 ——
         # 那条路线不导入舞台、相机也不跟着动作走，于是场景和动作双双"消失"。
         # .blend 只作为**观感来源**（材质已经调好的那套），角色本体仍用 PMX。
-        if pmx_candidate is not None and pmx_candidate.is_file():
+        if pmx_ok:
             path = pmx_candidate
-            look_blend = (blend_candidate
-                          if blend_candidate is not None and blend_candidate.is_file()
-                          else None)
-        elif blend_candidate is not None and blend_candidate.is_file():
-            # 拿不到源 PMX（比如用户直接拖了一个 .blend 来渲）才退回整份工程
+            look_blend = blend_candidate if blend_ok else None
+            appearance_only = False
+        elif blend_ok:
+            # T-50 D：模型预览 .blend 是“纯外观”（0 刚体/0 关节），不能静默走
+            # route B。没有可用 PMX 时必须明确告诉用户，不能假装有物理。
+            missing = "源 PMX 已不可用" if source_pmx else "这次没有可用的源 PMX"
+            ask = (
+                "这次「渲染模型」的预览 .blend 没有物理数据"
+                "（0 刚体 / 0 关节，只有材质与外观）。\n"
+                f"{missing}，无法自动配对成「PMX + 观感」。\n\n"
+                "是否按「仅外观」继续？（不会启用物理）\n"
+                "选「否」将取消，请重新选择 PMX。")
+            if not messagebox.askyesno("预览工程没有物理", ask):
+                self._log("已取消「继续」：预览 .blend 无物理，用户未选择仅外观。",
+                          "warn")
+                self.vars["status"].set(
+                    "已取消：预览 .blend 没有物理，请重新选择 PMX。")
+                return
             path = blend_candidate
-            look_blend = blend_candidate
+            look_blend = None
+            appearance_only = True
         else:
             look_blend = None
             path = Path(path)
@@ -4711,6 +4734,8 @@ class KomaFlowApp:
             self._set_character_source("blend", str(path))
         else:
             self._set_character_source("model", str(path))
+        # T-50：只有“仅外观”分支才允许无物理 .blend 继续
+        self._allow_no_physics = appearance_only
         # 刚渲出来的工程里带着调好的材质观感 —— 记成观感来源，
         # 并把「观感」直接切到卡渲迁移（用户刚渲三视图，显然想要那套观感）。
         if look_blend is not None and look_blend.is_file():
@@ -4725,13 +4750,27 @@ class KomaFlowApp:
         count = len(outputs or [])
         if path.suffix.lower() == ".blend":
             extra = "（渲好的三视图在出图目录里，当预览看）" if count else ""
-            self.vars["status"].set(
-                f"已把装配好的工程放进「角色模型」：{path.name}{extra}")
+            if appearance_only:
+                self.vars["status"].set(
+                    f"仅外观：{path.name}（不启用物理；{extra}）")
+                self._log("「继续」按仅外观处理：预览 .blend 无物理，未启用物理。",
+                          "warn")
+            else:
+                self.vars["status"].set(
+                    f"已把装配好的工程放进「角色模型」：{path.name}{extra}")
         elif path.suffix.lower() == ".pmx" and look_blend is not None:
+            # T-50 D：明确告诉用户已经自动配对，避免以为“只放了 PMX/只放了外观”
             self.vars["status"].set(
-                f"角色模型用 PMX：{path.name}；观感从「{look_blend.name}」迁移")
-            self._log(f"模型渲染结果（可编辑工程）已导入「角色模型」：{path}"
+                f"已自动配对：角色/物理用 PMX「{path.name}」；"
+                f"材质观感从预览 .blend「{look_blend.name}」迁移")
+            self._log(f"模型渲染「继续」已自动配对：PMX={path}；"
+                      f"look_from_blend={look_blend}"
                       + (f"；同批预览图 {count} 张" if count else ""))
+        elif path.suffix.lower() == ".pmx":
+            self.vars["status"].set(
+                f"角色模型用 PMX：{path.name}（物理由 PMX 提供）")
+            self._log(f"模型渲染结果已导入「角色模型」：{path}"
+                      + (f"；同批出图 {count} 张" if count else ""))
         else:
             extra = f"（另 {count - 1} 张单视图在同目录）" if count > 1 else ""
             self.vars["status"].set(

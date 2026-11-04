@@ -1122,6 +1122,9 @@ def _prepare_and_assemble(
         # 装配指纹里是安全的：它只在真改了来源时触发重建）。
         "look_from_blend": params.look_from_blend,
         "look_logic": _script_fingerprint(adapter.script("apply_look.py")),
+        # T-50：.blend 无物理时只有用户明确选「仅外观」才允许继续；
+        # 进指纹，切换这个选择会触发重新装配/重新判断。
+        "allow_no_physics": bool(getattr(params, "allow_no_physics", False)),
     }
 
     # ── 非临时工程文件（分段渲染的落点）──

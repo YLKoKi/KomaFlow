@@ -151,6 +151,10 @@ class Params:
     #: （通常就是「渲染模型」存出来的那份工程）。
     look_from_blend: str = ""
 
+    #: .blend 路线没有物理时，是否允许按「仅外观」继续（默认 False = 明确报错）。
+    #: 只有用户在「继续」弹窗里明确选择“仅外观”才置 True（T-50）。
+    allow_no_physics: bool = False
+
     # 冻结范围：分辨率固定 2K 2560×1440 @ 30fps（设计取舍）
     fps: int = 30
     width: int = 2560

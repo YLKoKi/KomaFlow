@@ -171,14 +171,42 @@ class AcceptModelRenderSourceTests(unittest.TestCase):
         self.assertEqual(self.app.vars["blend"].get(), "",
                          "旧 blend 没清 → route 仍是 blend（reviewer T-28 P1）")
         self.assertEqual(self.app.remembered, [str(self.pmx)])
+        self.assertFalse(self.app._allow_no_physics)
+
+    def test_accept_pmx_pairs_preview_blend_as_look(self):
+        self.app.accept_model_render(str(self.blend), outputs=[],
+                                     source_pmx=str(self.pmx))
+        self.assertEqual(self.app.vars["model"].get(), str(self.pmx))
+        self.assertEqual(self.app.settings.last_look_blend, str(self.blend))
+        self.assertIn("自动配对", self.app.vars["status"].get())
 
     def test_accept_blend_fallback_goes_to_blend_field(self):
-        # 拿不到源 PMX 时退回整份工程：必须进 blend，不能塞 model
+        # 拿不到源 PMX、用户确认“仅外观”：必须进 blend，且允许无物理
         self.app.vars["model"].set(r"X:\old.pmx")
         self.app.accept_model_render(str(self.blend), outputs=[],
                                      source_pmx="")
         self.assertEqual(self.app.vars["blend"].get(), str(self.blend))
         self.assertEqual(self.app.vars["model"].get(), "")
+        self.assertTrue(self.app._allow_no_physics)
+        self.assertIn("仅外观", self.app.vars["status"].get())
+
+    def test_cancel_appearance_only_keeps_old_source(self):
+        # 用户选「否」：不能静默退回 route B，角色卡保持原样
+        self.app.vars["model"].set(r"X:\old.pmx")
+
+        class _No:
+            @staticmethod
+            def askyesno(*_a, **_k):
+                return False
+
+        self.ns["messagebox"] = _No
+        self.app.accept_model_render(str(self.blend), outputs=[],
+                                     source_pmx="")
+        self.assertEqual(self.app.vars["model"].get(), r"X:\old.pmx")
+        self.assertEqual(self.app.vars["blend"].get(), "",
+                         "取消后不能把 .blend 塞进角色卡")
+        self.assertFalse(getattr(self.app, "_allow_no_physics", False))
+        self.assertTrue(any("已取消" in msg for _lvl, msg in self.app.logs))
 
 
 class RestoreLastCharacterTests(unittest.TestCase):

@@ -402,16 +402,29 @@ class TestModelRenderKeepsPmx(_WindowCase):
         self.assertEqual(Settings.load().last_look_blend, str(blend),
                          "那份 .blend 要留下当观感来源")
 
-    def test_without_pmx_falls_back_to_blend(self):
+    def test_without_pmx_requires_explicit_appearance_only(self):
         _pmx, blend = self._files()
-        self.app.accept_model_render(blend, [], source_pmx="")
+        with mock.patch("komaflow.ui.app.messagebox.askyesno",
+                        return_value=True) as ask:
+            self.app.accept_model_render(blend, [], source_pmx="")
         self.root.update()
-        # R06 第三入口：退回整份工程时必须进 blend 字段（并清掉 model），
-        # 否则 _collect_project 会拿 PMX 导入器去读 .blend。
-        self.assertEqual(self.app.vars["blend"].get(), str(blend),
-                         "拿不到源 PMX 时只能退回整份工程")
-        self.assertEqual(self.app.vars["model"].get(), "",
-                         "整份工程不能塞进 model —— route 会算错")
+        ask.assert_called_once()
+        # R06/T-50：无源 PMX 时不能静默走 route B；必须明确选「仅外观」。
+        self.assertEqual(self.app.vars["blend"].get(), str(blend))
+        self.assertEqual(self.app.vars["model"].get(), "")
+        self.assertTrue(getattr(self.app, "_allow_no_physics", False),
+                        "仅外观许可要落进 _collect_project 的 allow_no_physics")
+        self.assertIn("仅外观", self.app.vars["status"].get())
+
+    def test_without_pmx_cancel_keeps_card_unchanged(self):
+        _pmx, blend = self._files()
+        self.app.vars["model"].set("原来的.pmx")
+        with mock.patch("komaflow.ui.app.messagebox.askyesno",
+                        return_value=False):
+            self.app.accept_model_render(blend, [], source_pmx="")
+        self.root.update()
+        self.assertEqual(self.app.vars["model"].get(), "原来的.pmx")
+        self.assertEqual(self.app.vars["blend"].get(), "")
 
 
 class TestWholeProjectModeSaysWhatItDrops(_WindowCase):

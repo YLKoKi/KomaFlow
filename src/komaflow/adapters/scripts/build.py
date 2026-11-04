@@ -638,6 +638,35 @@ def _bone_coverage(vmd_path: str) -> dict:
     }
 
 
+def _route_b_physics_decision(state: dict, allow_no_physics: bool = False) -> dict:
+    """路线 B（用户自带 .blend）的物理决策（T-50）。
+
+    返回 ``{"action": "bake" | "skip" | "error", "reason": ..., "message": ...}``：
+
+    * 有刚体 + 有 tracks → ``bake``（保留原物理，只补一次烘焙）；
+    * 有刚体、没 tracks → ``bake``（烘焙前会 build_rig；旧行为）；
+    * **没刚体/没关节**（典型：模型预览 .blend）：
+        - 默认 ``error``：明确报“该 .blend 无物理数据”，**不能假装开物理**；
+        - 仅当用户明确选「仅外观」时 ``skip``（不烘、报告里写清没物理）。
+    """
+    state = state or {}
+    verdict = state.get("verdict")
+    bodies = int(state.get("rigidbodies") or 0)
+    joints = int(state.get("joints") or 0)
+    if verdict == "no_rigid_bodies" or bodies == 0:
+        message = ("该 .blend 无物理数据（没有刚体/关节），不能启用物理。"
+                   "请改用 PMX，或提供带物理的 .blend。")
+        if allow_no_physics:
+            return {"action": "skip", "reason": "appearance-only",
+                    "message": "按「仅外观」继续：该 .blend 无物理数据，"
+                               "不会启用物理（只保留材质/外观）。"}
+        return {"action": "error", "reason": "no-rigid-bodies",
+                "message": message}
+    if verdict == "bodies_without_tracks" or int(state.get("rigid_tracks") or 0) == 0:
+        return {"action": "bake", "reason": "build-rig-needed"}
+    return {"action": "bake", "reason": "ok", "joints": joints}
+
+
 def _inspect_physics_data() -> dict:
     """数一数当前工程里到底有多少物理数据（路线 B 用）。
 
@@ -1704,24 +1733,18 @@ def main() -> int:
             # 路线 B：用户工程里**已经有刚体**但没建约束/没烘焙时，在工作副本上补一次。
             # ⚠️ 只动 work 里的副本，绝不写回用户的 .blend（K-10.13）。
             state = report.get("route_b_physics") or {}
-            verdict = state.get("verdict")
-            # ⚠️ **只在"本来就有约束"的工程上补烘焙。**
-            #
-            # 实测：用户 .blend 里那 239 个刚体是"渲染模型"导入时带过来的，
-            # 它们的尺度/参数跟整片渲染不配套。若在这里补 build_rig + 烘焙，
-            # 结果是**头发炸飞 28 米**（2843 cm），比没有物理还糟。
-            #
-            # 所以只在工程已经自带 rigid_track（说明是 mmd_tools 正常装配出来的）
-            # 时才烘焙；缺约束的一律交给上层提示用户改用 PMX。
-            # 两种情况都要走烘焙：
-            # ok → 已有约束，直接烤
-            # bodies_without_tracks → 烘焙里会先 build_rig（动作已装完），再烤
-            if verdict in ("ok", "bodies_without_tracks"):
+            decision = _route_b_physics_decision(
+                state, bool(spec.get("allow_no_physics")))
+            report["route_b_physics_decision"] = decision
+            if decision["action"] == "bake":
                 report["physics_bake"] = _bake_physics(spec)
+            elif decision["action"] == "skip":
+                report["warnings"].append(decision["message"])
+                _log(decision["message"])
             else:
-                _log(f"路线 B 物理数据不完整（{verdict}），跳过烘焙："
-                     f"刚体 {state.get('rigidbodies')} 个、约束 "
-                     f"{state.get('rigid_tracks')} 个")
+                # T-50：没有物理就不能"成功" —— 明确报错，让用户换 PMX/带物理的 .blend
+                report["errors"].append(decision["message"])
+                _log(f"BUILD ERROR: {decision['message']}")
 
         # ── 镜头 ──
         # ⚠️ **导入之前必须先有一个相机，并且把它选中** —— 否则 mmd_tools 的
@@ -1875,6 +1898,40 @@ def main() -> int:
             # 想自己微调（改材质 / 灯光 / 相机 / 加东西）就打开它。
             print(f"[BUILD] 组装好的工程 -> {work_blend}"
                   f"（角色 + 动作 + 表情 + 镜头 + 舞台都在里面）", flush=True)
+
+            # T-50 A/C：保存后**重新打开文件**复核物理是否真的落盘（不是只看内存）。
+            try:
+                bpy.ops.wm.open_mainfile(filepath=work_blend)
+                saved_counts = _physics_counts()
+                world = bpy.context.scene.rigidbody_world
+                saved_baked = (bool(world.point_cache.is_baked)
+                               if world is not None else False)
+                report["assembly_physics"] = {
+                    "work_blend": work_blend,
+                    "route": "blend" if from_blend else "assets",
+                    "counts": saved_counts,
+                    "baked": saved_baked,
+                }
+                _log(f"保存后物理复核：刚体 {saved_counts['rigidbodies']} / "
+                     f"关节 {saved_counts['joints']} / "
+                     f"tracks {saved_counts['rigid_tracks']} / baked={saved_baked}")
+                if saved_counts["rigidbodies"] == 0:
+                    if spec.get("allow_no_physics"):
+                        report["warnings"].append(
+                            "保存后的 work.blend 没有刚体（按「仅外观」继续）。")
+                    elif not any("无物理" in e for e in report["errors"]):
+                        report["errors"].append(
+                            "保存后的 work.blend 没有刚体（物理未建立）")
+                elif not from_blend and not saved_baked:
+                    report["errors"].append(
+                        "保存后的 work.blend 物理缓存未烘焙（baked=False）")
+                elif not saved_baked:
+                    report["warnings"].append(
+                        "保存后的 work.blend 物理缓存未烘焙（baked=False）")
+            except Exception as exc: # noqa: BLE001 - 复核失败不该掩盖构建结果
+                report["warnings"].append(
+                    f"保存后物理复核失败：{type(exc).__name__}: {exc}")
+                _log(f"保存后物理复核失败：{type(exc).__name__}: {exc}")
 
         report["ok"] = not report["errors"]
 
