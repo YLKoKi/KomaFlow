@@ -64,8 +64,9 @@ def _bpy(scene, objects):
 
 class _Base(unittest.TestCase):
     def _run(self, path, name, scene, objects):
-        ns = _load(path, {name}, {"bpy": _bpy(scene, objects),
-                                  "_log": lambda *a, **k: None})
+        ns = _load(path, {name, "_same_object"},
+                   {"bpy": _bpy(scene, objects),
+                    "_log": lambda *a, **k: None})
         return ns[name]()
 
 

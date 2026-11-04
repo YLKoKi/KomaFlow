@@ -341,6 +341,9 @@ class KomaFlowApp:
         self.cancel: threading.Event | None = None
         self.control = ProcessControl()
         self.worker: threading.Thread | None = None
+        #: T-50/T-53：仅在用户明确选「仅外观」时允许无物理 .blend 继续。
+        self._allow_no_physics = False
+        self._pending_appearance_only = False
         self.started_at: float | None = None
         self.output_path: Path | None = None
         self.last_percent = 0.0
@@ -3512,6 +3515,8 @@ class KomaFlowApp:
         # 规则重算成别的值 —— 等于把他的选择悄悄改掉了。
         self._transparent_user_set = bool(project.params.transparent_touched)
         self.transparent.set("开" if project.params.transparent_background else "关")
+        # T-53 P2-2：「仅外观」许可随工程保存/重开保持
+        self._allow_no_physics = bool(project.params.allow_no_physics)
         # 物理：已改为 mmd_tools 原生（无开关、无档位，不用回填）
         # 存的就是内部键，直接用；文件里万一有怪值就退回默认
         self.alpha_codec.set(project.params.alpha_codec
@@ -4293,11 +4298,37 @@ class KomaFlowApp:
             self._set_notice(message)
             # 同一个错误只弹一次：run_finished 里还会因为 result.errors 弹"渲染失败"。
             self._last_error = message
+            if self._offer_appearance_only(message):
+                return
             messagebox.showerror("出错了", message)
 
         elif kind == "finished":
             self._set_busy(False)
             self.started_at = None
+            # T-53 P2-1：用户刚在错误弹窗里选了「仅外观」→ 自动用新许可重跑
+            if self._pending_appearance_only:
+                self._pending_appearance_only = False
+                self.root.after(100, self.on_start)
+
+    def _offer_appearance_only(self, message: str) -> bool:
+        """路线 B 无物理失败时给「仅外观」入口（T-53 P2-1）。
+
+        只有错误信息确实是“无物理数据”才问；PMX 静态模型走 skipped，不会到这里。
+        """
+        text = str(message or "")
+        if "无物理数据" not in text and "no-rigid-bodies" not in text:
+            return False
+        if not messagebox.askyesno(
+                "该 .blend 没有物理",
+                "该 .blend 没有刚体/关节，按当前设置不能启用物理。\n\n"
+                "是否按「仅外观」继续？（材质/外观照常，物理不会生效）\n"
+                "选「否」取消。"):
+            return False
+        self._allow_no_physics = True
+        self._pending_appearance_only = True
+        self._log("用户选择「仅外观」：允许无物理 .blend 继续。", "warn")
+        self.vars["status"].set("已选择「仅外观」，准备重新开始…")
+        return True
 
     def _on_assemble_finished(self, event: dict) -> None:
         """装配完成（或失败）：把工程复制到用户挑的位置，然后告诉他。

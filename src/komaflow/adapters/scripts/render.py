@@ -59,6 +59,18 @@ def _write_json(path: str, payload: dict) -> None:
     os.replace(tmp, path) # 原子写：读到的永远是完整文件
 
 
+def _same_object(a, b) -> bool:
+    """按 Blender 持久指针比较（T-53 P3）；fake/旧对象退回身份比较。"""
+    pa = getattr(a, "as_pointer", None)
+    pb = getattr(b, "as_pointer", None)
+    if callable(pa) and callable(pb):
+        try:
+            return pa() == pb()
+        except Exception: # noqa: BLE001
+            pass
+    return a is b
+
+
 def _force_render_camera_limits(far: float = 100000.0) -> dict:
     """渲染前强制**活动相机**（scene.camera）的远裁剪/景深（T-46）。
 
@@ -78,7 +90,7 @@ def _force_render_camera_limits(far: float = 100000.0) -> dict:
     for obj in bpy.data.objects:
         if obj.type != "CAMERA":
             continue
-        if any(obj is cam for cam in cameras):
+        if any(_same_object(obj, cam) for cam in cameras):
             continue
         cameras.append(obj)
 

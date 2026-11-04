@@ -374,6 +374,7 @@ def _physics_counts() -> dict:
         "constraints": constraints,
         "scene_rigidbodies": len(scene_bodies),
         "scene_joints": len(scene_joints),
+        "world": world is not None,
         "armature": getattr(arm, "name", None) if arm is not None else None,
         "root": getattr(root, "name", None) if root is not None else None,
         "is_built": is_built,
@@ -448,8 +449,18 @@ def _bake_physics(spec: dict) -> dict:
         if counts_build.get("scene_rigidbodies"):
             scene_hint = (f"（场景里另有 {counts_build['scene_rigidbodies']} 个刚体，"
                           "可能属于舞台/其他模型，不属于目标角色）")
-        _log(f"拒绝烘焙：目标角色没有刚体（0 个）{scene_hint}，物理不可能生效")
-        return {"skipped": f"目标角色无物理数据（刚体 0 个）{scene_hint}，未烘焙",
+        route = str(spec.get("route") or "assets")
+        if route == "blend":
+            message = "该 .blend 无物理数据（没有刚体/关节），不能启用物理。"
+            _log("拒绝烘焙：" + message)
+            return {"skipped": message + " 未烘焙",
+                    "reason": "no-rigid-bodies",
+                    "is_built": counts_build["is_built"],
+                    "counts": counts_build, "counts_before": counts_before}
+        # T-53 P1：assets/PMX 的静态模型可以合法地 0 刚体 —— 跳过物理、仍可渲染
+        message = f"该模型无刚体数据，物理将跳过（仍可正常渲染）{scene_hint}"
+        _log(message)
+        return {"skipped": message, "warning": message,
                 "reason": "no-rigid-bodies",
                 "is_built": counts_build["is_built"],
                 "counts": counts_build, "counts_before": counts_before}
@@ -1728,7 +1739,11 @@ def main() -> int:
         # ⚠️ 这一步很慢（实测 604 刚体 / 739 帧约 **175 秒**），
         # 而且期间**不要并行跑别的 Blender 任务**。
         if model:
-            report["physics_bake"] = _bake_physics(spec)
+            bake = _bake_physics(spec)
+            report["physics_bake"] = bake
+            # T-53 P1：PMX 静态模型可合法 0 刚体 —— 只给 warning，不判失败
+            if bake.get("warning"):
+                report["warnings"].append(bake["warning"])
         elif from_blend:
             # 路线 B：用户工程里**已经有刚体**但没建约束/没烘焙时，在工作副本上补一次。
             # ⚠️ 只动 work 里的副本，绝不写回用户的 .blend（K-10.13）。
@@ -1911,23 +1926,20 @@ def main() -> int:
                     "route": "blend" if from_blend else "assets",
                     "counts": saved_counts,
                     "baked": saved_baked,
+                    "world": world is not None,
                 }
                 _log(f"保存后物理复核：刚体 {saved_counts['rigidbodies']} / "
                      f"关节 {saved_counts['joints']} / "
                      f"tracks {saved_counts['rigid_tracks']} / baked={saved_baked}")
-                if saved_counts["rigidbodies"] == 0:
-                    if spec.get("allow_no_physics"):
-                        report["warnings"].append(
-                            "保存后的 work.blend 没有刚体（按「仅外观」继续）。")
-                    elif not any("无物理" in e for e in report["errors"]):
-                        report["errors"].append(
-                            "保存后的 work.blend 没有刚体（物理未建立）")
-                elif not from_blend and not saved_baked:
-                    report["errors"].append(
-                        "保存后的 work.blend 物理缓存未烘焙（baked=False）")
-                elif not saved_baked:
-                    report["warnings"].append(
-                        "保存后的 work.blend 物理缓存未烘焙（baked=False）")
+                verdict = _post_save_physics_verdict(
+                    "blend" if from_blend else "assets",
+                    saved_counts, saved_baked,
+                    bool(spec.get("allow_no_physics")))
+                report["warnings"].extend(verdict["warnings"])
+                for err in verdict["errors"]:
+                    # 路线 B 的决策已经写过同一条“无物理数据”，别重复
+                    if not any("无物理数据" in e for e in report["errors"]):
+                        report["errors"].append(err)
             except Exception as exc: # noqa: BLE001 - 复核失败不该掩盖构建结果
                 report["warnings"].append(
                     f"保存后物理复核失败：{type(exc).__name__}: {exc}")
@@ -1942,6 +1954,52 @@ def main() -> int:
 
     _write(spec, report)
     return 0 if report["ok"] else 1
+
+
+def _post_save_physics_verdict(route: str, counts: dict, baked: bool,
+                               allow_no_physics: bool = False) -> dict:
+    """保存后复核的“报错/警告”判定（T-53 P1/P3，供单测）。
+
+    * **assets/PMX 路线**：0 刚体是合法的静态模型 → warning（物理跳过、仍可渲染），
+      **不是 error**；有刚体但未烘焙才是 error。
+    * **route B `.blend`**：没物理默认 error（“请改用 PMX/带物理工程”）；
+      仅 `allow_no_physics=True`（仅外观）→ warning；未烘焙 → warning。
+    * ``counts`` 里的 ``world`` 只用于展示/断言，不影响“有没有刚体”的判定。
+    """
+    route = route or "assets"
+    bodies = int((counts or {}).get("rigidbodies") or 0)
+    errors: list[str] = []
+    warnings: list[str] = []
+    if bodies == 0:
+        if route == "blend" and not allow_no_physics:
+            errors.append(
+                "该 .blend 无物理数据（没有刚体/关节），不能启用物理。"
+                "请改用 PMX，或提供带物理的 .blend。")
+        elif route == "blend":
+            warnings.append("按「仅外观」继续：保存后的 work.blend 没有刚体。")
+        else:
+            warnings.append("该模型无刚体数据，物理已跳过（仍可正常渲染）。")
+    elif not baked:
+        if route == "blend":
+            warnings.append("保存后的 work.blend 物理缓存未烘焙（baked=False）。")
+        else:
+            errors.append("保存后的 work.blend 物理缓存未烘焙（baked=False）。")
+    return {"errors": errors, "warnings": warnings}
+
+
+def _same_object(a, b) -> bool:
+    """按 Blender 的持久指针比较两个对象（T-53 P3：不用 ``is``）。
+
+    fake bpy 没有 ``as_pointer`` 时退回身份比较。
+    """
+    pa = getattr(a, "as_pointer", None)
+    pb = getattr(b, "as_pointer", None)
+    if callable(pa) and callable(pb):
+        try:
+            return pa() == pb()
+        except Exception: # noqa: BLE001
+            pass
+    return a is b
 
 
 def _relax_camera_limits(far: float = 100000.0) -> dict:
@@ -1971,7 +2029,7 @@ def _relax_camera_limits(far: float = 100000.0) -> dict:
     for obj in bpy.data.objects:
         if obj.type != "CAMERA":
             continue
-        if any(obj is cam for cam in cameras):
+        if any(_same_object(obj, cam) for cam in cameras):
             continue
         cameras.append(obj)
 
