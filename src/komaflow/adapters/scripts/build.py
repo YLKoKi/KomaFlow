@@ -1840,8 +1840,7 @@ def main() -> int:
         # 景深**默认关**（关掉才等于"全都清晰、没有景深范围限制"）。
         # ⚠️ 路线 B 是**用户自己的工程**：景深如果他自己配了，就该保留（设计取舍 的另一面）。
         # 裁剪端点仍然放开 —— 那属于"别把东西切掉"，不是构图偏好。
-        report["camera_limits"] = _relax_camera_limits(
-            keep_dof=bool(spec.get("keep_dof", False)) or bool(from_blend))
+        report["camera_limits"] = _relax_camera_limits()
 
         # ── 统计 ──
         report["objects"] = len(bpy.data.objects)
@@ -1862,6 +1861,9 @@ def main() -> int:
         }
 
         # ── 存工具自有的工作工程（绝不覆盖用户文件）──
+        # T-46：镜头 VMD / 驱动 / 自动机位之后可能又出现新相机或被改回 clip_end=40。
+        # **保存前对活动相机再强制一次** —— 最终渲染的就是 scene.camera。
+        report["camera_limits_final"] = _relax_camera_limits()
         work_blend = spec.get("work_blend")
         if work_blend:
             _progress(spec, "save",
@@ -1885,36 +1887,58 @@ def main() -> int:
     return 0 if report["ok"] else 1
 
 
-def _relax_camera_limits(*, keep_dof: bool = False, far: float = 100000.0) -> dict:
-    """把场景里所有相机的**裁剪与景深**放开到"无上限"。
+def _relax_camera_limits(far: float = 100000.0) -> dict:
+    """把**活动相机**与场景里其它相机的远裁剪/景深放开到“无上限”。
 
-    :param keep_dof: ``True`` 时不关景深（用户工程里自己配好的景深保留）。
-    :param far: 远裁剪端点。默认 10 万单位 —— 对这个尺度来说是"无上限"。
+    T-46 现场：``work.blend`` 里活动相机 ``KomaFlow_Cam`` 的 ``clip_end=40``，
+    而报告只改了 ``KomaFlow_Cam.001`` → 舞台 67 个远于 40 单位的对象被裁掉，
+    背景只出一半。**最终渲染的是 ``scene.camera``**，所以必须先处理它，
+    再遍历所有相机兜底。
 
-    为什么要做：
-      * Blender 相机默认远裁剪只有 **100**，能力包又把它写死成 **200**；
-        舞台/背景一大，远处的东西就被**整个切掉**（表现为"背景缺一块"）
-      * 景深（DOF）一旦开着就有"清晰范围"，超出就糊；默认关掉才符合
-        "景深无上限"——整帧都清晰
+    规则：
+    * ``clip_end`` 小于 ``far`` 就拉到 ``far``（默认 10 万，对这个尺度=无上限）；
+    * ``dof.use_dof = False``（景深有清晰范围，会糊）；
+    * **不动 ``clip_start``** —— 近裁剪是场景/用户自己的设置，硬压到 0.01
+      会让贴脸物件穿模/遮挡（审查要求）；
+    * 焦距/位置/朝向不动（那是构图）。
 
-    ⚠️ 只改**裁剪与景深**，不动焦距/位置/朝向 —— 那些是构图，改了就是另一种画面。
+    :return: ``{"active": 活动相机名, "active_final": [clip_start, clip_end, dof],
+              "changed": [...], "far": far}``
     """
     changed = []
-    for cam in [o for o in bpy.data.objects if o.type == "CAMERA"]:
+    scene = bpy.context.scene
+    active = scene.camera
+    cameras = []
+    if active is not None:
+        cameras.append(active)
+    for obj in bpy.data.objects:
+        if obj.type != "CAMERA":
+            continue
+        if any(obj is cam for cam in cameras):
+            continue
+        cameras.append(obj)
+
+    for cam in cameras:
         data = cam.data
         before = (data.clip_start, data.clip_end, data.dof.use_dof)
         if data.clip_end < far:
             data.clip_end = far
-        if data.clip_start > 0.01:
-            data.clip_start = min(data.clip_start, 0.01)
-        if not keep_dof and data.dof.use_dof:
+        if data.dof.use_dof:
             data.dof.use_dof = False
         after = (data.clip_start, data.clip_end, data.dof.use_dof)
         if after != before:
-            changed.append({"camera": cam.name, "from": list(before), "to": list(after)})
-    if changed:
-        _log(f"相机裁剪/景深已放开：{len(changed)} 台")
-    return {"changed": changed, "keep_dof": keep_dof, "far": far}
+            changed.append({"camera": cam.name,
+                            "from": list(before), "to": list(after)})
+
+    active_final = None
+    if active is not None:
+        data = active.data
+        active_final = [data.clip_start, data.clip_end, data.dof.use_dof]
+    _log(f"相机裁剪/景深：活动={getattr(active, 'name', None)} "
+         f"最终={active_final}；共改 {len(changed)} 台")
+    return {"active": getattr(active, "name", None),
+            "active_final": active_final,
+            "changed": changed, "far": far}
 
 
 def _count_types() -> dict:

@@ -59,6 +59,51 @@ def _write_json(path: str, payload: dict) -> None:
     os.replace(tmp, path) # 原子写：读到的永远是完整文件
 
 
+def _force_render_camera_limits(far: float = 100000.0) -> dict:
+    """渲染前强制**活动相机**（scene.camera）的远裁剪/景深（T-46）。
+
+    现场：``work.blend`` 里活动相机 ``KomaFlow_Cam`` 的 ``clip_end=40``，
+    舞台远于 40 的部分被整块裁掉。build 时已修，但渲染用的可能是旧工程，
+    或镜头 VMD/驱动把值改回去 —— 所以打开工程后、真正渲染前再强制一次。
+
+    规则：活动相机优先，再遍历所有相机兜底；``clip_end=far``、``dof=False``；
+    **不动 clip_start**。
+    """
+    changed = []
+    scene = bpy.context.scene
+    active = scene.camera
+    cameras = []
+    if active is not None:
+        cameras.append(active)
+    for obj in bpy.data.objects:
+        if obj.type != "CAMERA":
+            continue
+        if any(obj is cam for cam in cameras):
+            continue
+        cameras.append(obj)
+
+    for cam in cameras:
+        data = cam.data
+        before = (data.clip_start, data.clip_end, data.dof.use_dof)
+        if data.clip_end < far:
+            data.clip_end = far
+        if data.dof.use_dof:
+            data.dof.use_dof = False
+        after = (data.clip_start, data.clip_end, data.dof.use_dof)
+        if after != before:
+            changed.append({"camera": cam.name,
+                            "from": list(before), "to": list(after)})
+    active_final = None
+    if active is not None:
+        data = active.data
+        active_final = [data.clip_start, data.clip_end, data.dof.use_dof]
+    _log(f"渲染前相机裁剪：活动={getattr(active, 'name', None)} "
+         f"最终={active_final}；共改 {len(changed)} 台")
+    return {"active": getattr(active, "name", None),
+            "active_final": active_final,
+            "changed": changed, "far": far}
+
+
 def main() -> int:
     argv = sys.argv
     if "--" not in argv:
@@ -122,6 +167,10 @@ def main() -> int:
             state["ok"] = False
             _write_json(progress_path, state)
             return 1
+
+        # T-46：work.blend 里活动相机的 clip_end 可能被写成 40（镜头 VMD/旧版本），
+        # 打开工程后、真正渲染前再强制一次 —— 单帧与整片都覆盖。
+        state["camera_limits"] = _force_render_camera_limits()
 
         still = bool(spec.get("still"))
 
