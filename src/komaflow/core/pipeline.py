@@ -258,6 +258,9 @@ def render_fingerprint(project: Project, report: dict) -> str:
         "camera": _stamp(str(project.inputs.camera or "")),
         # 观感来源（材质迁移的来源工程）——换了它画面就变，必须作废旧段
         "look_from_blend": _stamp(str(params.look_from_blend or "")),
+        # T-60：用户手改的 work.blend 也必须让旧段作废（否则续渲会拿旧视频）
+        "work_blend": _stamp(str(report.get("work_blend") or "")),
+        "user_edited": bool(report.get("user_edited")),
         # 画面参数
         "size": [params.width, params.height, params.fps],
         "quality": [params.quality, params.bitrate, params.crf],
@@ -1029,6 +1032,126 @@ def _durable_paths(project: Project) -> tuple[Path, Path, str | None]:
     return blend, blend.with_suffix(".blend.json"), avoided
 
 
+#: 组装后可编辑 work.blend 的“上次状态”记录（T-60）。
+EDITABLE_STATE_NAME = "editable_blend.json"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _editable_stamp(path: Path) -> dict:
+    stat = path.stat()
+    return {"path": str(path), "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns), "sha256": _file_sha256(path)}
+
+
+def _write_editable_state(work_dir: Path, work_blend: Path) -> None:
+    """组装/复用后记录可编辑 .blend 的路径 + size/mtime/hash（T-60）。"""
+    try:
+        payload = _editable_stamp(work_blend)
+        (Path(work_dir) / EDITABLE_STATE_NAME).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _detect_editable_change(work_dir: Path, work_blend: Path) -> dict:
+    """检查上次记录的 work.blend 是否被用户手工改过（T-60）。
+
+    返回 ``{"status": "none"|"same"|"edited"|"missing", ...}``：
+    * 没有记录 / 记录不可读 → ``none``（走原有逻辑）；
+    * 文件还在且 size/mtime/hash 都没变 → ``same``；
+    * 文件还在但变了 → ``edited``（优先用用户文件）；
+    * 记录里的路径不在了（改名/删除）→ ``missing``（重新装配）。
+    """
+    state_path = Path(work_dir) / EDITABLE_STATE_NAME
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "none"}
+    if not isinstance(state, dict) or not state.get("path"):
+        return {"status": "none"}
+    recorded = Path(str(state["path"]))
+    if not recorded.is_file():
+        return {"status": "missing", "state": state}
+    try:
+        current = _editable_stamp(recorded)
+    except OSError:
+        return {"status": "missing", "state": state}
+    same = all(current.get(key) == state.get(key)
+               for key in ("size", "mtime_ns", "sha256"))
+    return {"status": "same" if same else "edited",
+            "state": state, "current": current, "path": recorded}
+
+
+def _report_has_physics(report: dict) -> bool:
+    """装配报告是否能证明“有物理”（无法判断时按有物理处理，不误拦）。"""
+    bake = report.get("physics_bake") or {}
+    if bake.get("error"):
+        return False
+    if bake.get("reason") == "no-rigid-bodies":
+        return False
+    counts = bake.get("counts") or {}
+    if int(counts.get("rigidbodies") or 0) > 0:
+        return True
+    assembly = (report.get("assembly_physics") or {}).get("counts") or {}
+    if int(assembly.get("rigidbodies") or 0) > 0:
+        return True
+    verdict = (report.get("route_b_physics") or {}).get("verdict")
+    if verdict == "no_rigid_bodies":
+        return False
+    return True
+
+
+def _use_edited_blend(work_dir: Path, work_blend: Path, build_spec: dict,
+                      params, on_event=None) -> dict | None:
+    """检测到手改 work.blend 时，构建“跳过装配、直接渲染该文件”的报告（T-60）。"""
+    change = _detect_editable_change(work_dir, work_blend)
+    if change.get("status") != "edited":
+        return None
+    _emit(on_event, "log", level="warn",
+          message=f"检测到手工修改：{work_blend}（跳过装配，直接按改动后的 .blend 渲染，不覆盖它）")
+    # 卡片/参数是否也变了 —— 变了也只提示，不覆盖用户手改文件
+    spec_path = Path(work_dir) / "build_spec.json"
+    try:
+        previous_spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous_spec = None
+    if isinstance(previous_spec, dict) and previous_spec != build_spec:
+        _emit(on_event, "log", level="warn",
+              message=("卡片/参数有变化，但当前按手改 .blend 渲染，卡片改动未应用；"
+                       "要应用请重新组装（删除/改名该 .blend 后重跑）。"))
+
+    report: dict = {}
+    try:
+        cached = json.loads((Path(work_dir) / "build_report.json").read_text(
+            encoding="utf-8"))
+        if isinstance(cached, dict):
+            report = cached
+    except (OSError, ValueError):
+        report = {}
+    report = _refresh_frame_fields(report, params)
+    report["work_blend"] = str(work_blend)
+    report["user_edited"] = True
+    report["editable_blend"] = str(work_blend)
+    report["build_skipped"] = "user-edited"
+    if not _report_has_physics(report):
+        if not getattr(params, "allow_no_physics", False):
+            raise KomaFlowError(
+                ErrorKind.PHYSICS_FAILED,
+                detail=("检测到的这个手改 .blend 没有物理数据。"
+                        "请改用 PMX/带物理的 .blend，或选择「仅外观」继续。"))
+        report.setdefault("warnings", []).append(
+            "手改 .blend 无物理数据，按「仅外观」继续（不会启用物理）。")
+    _write_editable_state(work_dir, work_blend)
+    return report
+
+
 def _prepare_and_assemble(
     project: Project,
     work_dir: Path,
@@ -1139,9 +1262,21 @@ def _prepare_and_assemble(
                        f"为免覆盖你的原件，另存为：{durable_blend.name}"))
     assembly_key = _assembly_fingerprint(build_spec)
 
+    # T-60：用户手工改过可编辑 work.blend（路径/名字不变）→ 优先用它渲染。
+    edit_change = _detect_editable_change(work_dir, work_blend)
+    if edit_change.get("status") == "edited":
+        edited_report = _use_edited_blend(
+            work_dir, work_blend, build_spec, params, on_event)
+        if edited_report is not None:
+            return adapter, exe, edited_report
+    force_rebuild = edit_change.get("status") == "missing"
+    if force_rebuild:
+        _emit(on_event, "log", level="warn",
+              message="上次记录的手改 .blend 已改名/删除，按当前卡片重新装配")
+
     # R08：侧车缺失时这里也要有默认值（下面会读 usable/why_not）。
     usable, why_not = False, "没有可复用的工程记录"
-    if durable_blend.is_file() and durable_key.is_file():
+    if durable_blend.is_file() and durable_key.is_file() and not force_rebuild:
         try:
             saved = json.loads(durable_key.read_text(encoding="utf-8"))
         except ValueError:
@@ -1174,6 +1309,7 @@ def _prepare_and_assemble(
                       message=f"工程文件复制失败，改为重新装配：{exc}")
                 copy_failed = True
             else:
+                _write_editable_state(work_dir, work_blend)
                 return adapter, exe, _refresh_frame_fields(saved["report"], params)
 
     copy_failed = False   # 复制失败 ≠ 素材变了，日志要分开说
@@ -1188,7 +1324,8 @@ def _prepare_and_assemble(
 
     # 复用：素材与参数一字未变、工作工程还在，就不必再装配一遍
     spec_path = work_dir / "build_spec.json"
-    if spec_path.is_file() and work_blend.is_file() and build_report_path.is_file():
+    if (not force_rebuild and spec_path.is_file() and work_blend.is_file()
+            and build_report_path.is_file()):
         try:
             previous = json.loads(spec_path.read_text(encoding="utf-8"))
         except ValueError:
@@ -1209,6 +1346,7 @@ def _prepare_and_assemble(
             if cached is not None and cached.get("ok") and ok_work:
                 _emit(on_event, "log", level="info",
                       message="素材与参数没变，复用已有的装配结果")
+                _write_editable_state(work_dir, work_blend)
                 return adapter, exe, _refresh_frame_fields(cached, params)
             if cached is not None and cached.get("ok") and not ok_work:
                 _emit(on_event, "log", level="warn",
@@ -1303,6 +1441,8 @@ def _prepare_and_assemble(
         _emit(on_event, "log", level="warn",
               message=f"工程文件另存失败（不影响本次渲染）：{exc}")
 
+    # T-60：记录这次实际装配好的可编辑 work.blend（供下次检测手改）
+    _write_editable_state(work_dir, work_blend)
     return adapter, exe, report
 
 
