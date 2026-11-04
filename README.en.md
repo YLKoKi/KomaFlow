@@ -4,7 +4,7 @@
 >
 > Do not use the green `Code → Download ZIP` button — that is the **source code**
 > and contains no executable. The app is the asset on the **Releases** page
-> (`KomaFlow_V1.2.3.zip`, **~12.3 MB (12,917,448 bytes)**).
+> (`KomaFlow_V1.2.3.zip`, **~12.3 MB (see the Releases page for the exact size)**).
 
 
 Turn MMD models (`.pmx`) and motions (`.vmd`) into a finished video — by driving
@@ -85,7 +85,7 @@ src/komaflow/            application
   adapters/              Blender and FFmpeg drivers
   adapters/vendor/       MMD still renderer (MIT, see LICENSE / NOTICE)
   ui/                    Tk interface
-tests/                   455 unit tests (actually run; 3 skipped by design)
+tests/                   465 unit tests (actually run; 3 skipped by design)
 tools/                   PyInstaller spec, packaging, asset generators
 docs/                    architecture and usage notes (Chinese)
 ```
