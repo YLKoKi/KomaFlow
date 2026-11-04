@@ -4,7 +4,7 @@
 >
 > Do not use the green `Code → Download ZIP` button — that is the **source code**
 > and contains no executable. The app is the asset on the **Releases** page
-> (`KomaFlow_V1.2.3.zip`, **~12.3 MB (12,924,873 bytes)**).
+> (`KomaFlow_V1.2.3.zip`, **~12.3 MB (12,924,813 bytes)**).
 
 
 Turn MMD models (`.pmx`) and motions (`.vmd`) into a finished video — by driving
