@@ -1050,43 +1050,93 @@ def _editable_stamp(path: Path) -> dict:
             "mtime_ns": int(stat.st_mtime_ns), "sha256": _file_sha256(path)}
 
 
-def _write_editable_state(work_dir: Path, work_blend: Path) -> None:
-    """组装/复用后记录可编辑 .blend 的路径 + size/mtime/hash（T-60）。"""
+def _write_editable_state(work_dir: Path, work_blend: Path,
+                          durable_blend: Path | None = None) -> None:
+    """组装/复用后记录可编辑 .blend（work + 出图目录 durable）的状态（T-60/T-64）。
+
+    记录的是**基线**（组装出来的版本），用户手改后不会刷新它 ——
+    否则下一次渲染就会把手改文件当“基线”，再下一次又重装覆盖掉。
+    """
+    payload: dict = {}
     try:
-        payload = _editable_stamp(work_blend)
+        payload["work"] = _editable_stamp(work_blend)
+    except OSError:
+        payload["work"] = None
+    if durable_blend is not None:
+        try:
+            payload["durable"] = _editable_stamp(durable_blend)
+        except OSError:
+            payload["durable"] = None
+    try:
         (Path(work_dir) / EDITABLE_STATE_NAME).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
 
 
-def _detect_editable_change(work_dir: Path, work_blend: Path) -> dict:
-    """检查上次记录的 work.blend 是否被用户手工改过（T-60）。
+def _editable_records(state: dict) -> dict:
+    """兼容旧版“单条 flat 记录”，统一成 ``{"work": {...}, "durable": {...}}``。"""
+    if not isinstance(state, dict):
+        return {}
+    if state.get("path"):
+        return {"work": state}
+    records = {}
+    for key in ("work", "durable"):
+        value = state.get(key)
+        if isinstance(value, dict) and value.get("path"):
+            records[key] = value
+    return records
 
-    返回 ``{"status": "none"|"same"|"edited"|"missing", ...}``：
-    * 没有记录 / 记录不可读 → ``none``（走原有逻辑）；
-    * 文件还在且 size/mtime/hash 都没变 → ``same``；
-    * 文件还在但变了 → ``edited``（优先用用户文件）；
-    * 记录里的路径不在了（改名/删除）→ ``missing``（重新装配）。
+
+def _detect_editable_change(work_dir: Path, work_blend: Path,
+                            durable_blend: Path | None = None) -> dict:
+    """检查上次记录的 work/durable `.blend` 是否被用户手工改过（T-60/T-64）。
+
+    返回 ``{"status": "none"|"same"|"edited"|"missing", "path": 选中文件, ...}``：
+    * 没有记录 / 记录不可读 → ``none``；
+    * 任一记录还在且 size/mtime/hash 变了 → ``edited``，选中该文件
+      （输出目录 durable 优先，其次 work）；
+    * 记录里的路径不在了（改名/删除）→ ``missing``（重新装配）；
+    * 都没变 → ``same``。
     """
     state_path = Path(work_dir) / EDITABLE_STATE_NAME
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"status": "none"}
-    if not isinstance(state, dict) or not state.get("path"):
+    records = _editable_records(state)
+    if not records:
         return {"status": "none"}
-    recorded = Path(str(state["path"]))
-    if not recorded.is_file():
-        return {"status": "missing", "state": state}
-    try:
-        current = _editable_stamp(recorded)
-    except OSError:
-        return {"status": "missing", "state": state}
-    same = all(current.get(key) == state.get(key)
-               for key in ("size", "mtime_ns", "sha256"))
-    return {"status": "same" if same else "edited",
-            "state": state, "current": current, "path": recorded}
+
+    edited: list[tuple[str, Path]] = []
+    missing: list[str] = []
+    unchanged: list[tuple[str, Path]] = []
+    for name in ("durable", "work"):
+        record = records.get(name)
+        if not record:
+            continue
+        recorded = Path(str(record["path"]))
+        if not recorded.is_file():
+            missing.append(name)
+            continue
+        try:
+            current = _editable_stamp(recorded)
+        except OSError:
+            missing.append(name)
+            continue
+        if all(current.get(key) == record.get(key)
+               for key in ("size", "mtime_ns", "sha256")):
+            unchanged.append((name, recorded))
+        else:
+            edited.append((name, recorded))
+    if edited:
+        chosen_name, chosen_path = edited[0]   # durable 在前，优先输出目录
+        return {"status": "edited", "path": chosen_path,
+                "which": chosen_name, "state": state}
+    if missing:
+        return {"status": "missing", "missing": missing, "state": state}
+    chosen = unchanged[0][1] if unchanged else Path(str(work_blend))
+    return {"status": "same", "path": chosen, "state": state}
 
 
 def _report_has_physics(report: dict) -> bool:
@@ -1108,23 +1158,46 @@ def _report_has_physics(report: dict) -> bool:
     return True
 
 
+#: T-64：比较“卡片是否变了”时只看素材/路线类输入；
+#: **不含帧区间/分辨率** —— 用户只改渲哪一段不该提示“卡片改动未应用”。
+_EDIT_CARD_KEYS = (
+    "route", "model", "blend_in", "motions", "camera_motion", "stage",
+    "look_from_blend", "allow_no_physics", "preroll_frames", "transparent",
+)
+
+
+def _card_inputs_changed(previous: dict, current: dict) -> bool:
+    if not isinstance(previous, dict):
+        return False
+    return any(previous.get(key) != current.get(key) for key in _EDIT_CARD_KEYS)
+
+
 def _use_edited_blend(work_dir: Path, work_blend: Path, build_spec: dict,
-                      params, on_event=None) -> dict | None:
-    """检测到手改 work.blend 时，构建“跳过装配、直接渲染该文件”的报告（T-60）。"""
-    change = _detect_editable_change(work_dir, work_blend)
+                      params, on_event=None,
+                      durable_blend: Path | None = None) -> dict | None:
+    """检测到手改 `.blend` 时，构建“跳过装配、直接渲染该文件”的报告（T-60/T-64）。
+
+    ⚠️ **不更新基线**：基线必须一直是最初组装出来的版本，否则用户手改一次后
+    下一轮就会被当成“基线”，再下一轮又可能被 durable 覆盖。
+    """
+    change = _detect_editable_change(work_dir, work_blend, durable_blend)
     if change.get("status") != "edited":
         return None
+    chosen = Path(change.get("path") or work_blend)
+    which = "输出目录" if change.get("which") == "durable" else "工作目录"
     _emit(on_event, "log", level="warn",
-          message=f"检测到手工修改：{work_blend}（跳过装配，直接按改动后的 .blend 渲染，不覆盖它）")
+          message=(f"检测到手工修改（{which}）：{chosen}"
+                   "（跳过装配，直接按改动后的 .blend 渲染，不覆盖它）"))
     # 卡片/参数是否也变了 —— 变了也只提示，不覆盖用户手改文件
     spec_path = Path(work_dir) / "build_spec.json"
     try:
         previous_spec = json.loads(spec_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         previous_spec = None
-    if isinstance(previous_spec, dict) and previous_spec != build_spec:
+    if isinstance(previous_spec, dict) and _card_inputs_changed(
+            previous_spec, build_spec):
         _emit(on_event, "log", level="warn",
-              message=("卡片/参数有变化，但当前按手改 .blend 渲染，卡片改动未应用；"
+              message=("卡片/素材有变化，但当前按手改 .blend 渲染，卡片改动未应用；"
                        "要应用请重新组装（删除/改名该 .blend 后重跑）。"))
 
     report: dict = {}
@@ -1136,9 +1209,10 @@ def _use_edited_blend(work_dir: Path, work_blend: Path, build_spec: dict,
     except (OSError, ValueError):
         report = {}
     report = _refresh_frame_fields(report, params)
-    report["work_blend"] = str(work_blend)
+    report["work_blend"] = str(chosen)
     report["user_edited"] = True
-    report["editable_blend"] = str(work_blend)
+    report["editable_blend"] = str(chosen)
+    report["edited_source"] = change.get("which", "work")
     report["build_skipped"] = "user-edited"
     if not _report_has_physics(report):
         if not getattr(params, "allow_no_physics", False):
@@ -1148,7 +1222,7 @@ def _use_edited_blend(work_dir: Path, work_blend: Path, build_spec: dict,
                         "请改用 PMX/带物理的 .blend，或选择「仅外观」继续。"))
         report.setdefault("warnings", []).append(
             "手改 .blend 无物理数据，按「仅外观」继续（不会启用物理）。")
-    _write_editable_state(work_dir, work_blend)
+    # T-64：**不要**在这里写 editable 基线 —— 保持原始基线，连续多轮都识别手改
     return report
 
 
@@ -1262,11 +1336,12 @@ def _prepare_and_assemble(
                        f"为免覆盖你的原件，另存为：{durable_blend.name}"))
     assembly_key = _assembly_fingerprint(build_spec)
 
-    # T-60：用户手工改过可编辑 work.blend（路径/名字不变）→ 优先用它渲染。
-    edit_change = _detect_editable_change(work_dir, work_blend)
+    # T-60/T-64：用户手工改过可编辑 .blend（work 或输出目录 durable）→ 优先用它渲染。
+    edit_change = _detect_editable_change(work_dir, work_blend, durable_blend)
     if edit_change.get("status") == "edited":
         edited_report = _use_edited_blend(
-            work_dir, work_blend, build_spec, params, on_event)
+            work_dir, work_blend, build_spec, params, on_event,
+            durable_blend=durable_blend)
         if edited_report is not None:
             return adapter, exe, edited_report
     force_rebuild = edit_change.get("status") == "missing"
@@ -1309,7 +1384,7 @@ def _prepare_and_assemble(
                       message=f"工程文件复制失败，改为重新装配：{exc}")
                 copy_failed = True
             else:
-                _write_editable_state(work_dir, work_blend)
+                _write_editable_state(work_dir, work_blend, durable_blend)
                 return adapter, exe, _refresh_frame_fields(saved["report"], params)
 
     copy_failed = False   # 复制失败 ≠ 素材变了，日志要分开说
@@ -1346,7 +1421,7 @@ def _prepare_and_assemble(
             if cached is not None and cached.get("ok") and ok_work:
                 _emit(on_event, "log", level="info",
                       message="素材与参数没变，复用已有的装配结果")
-                _write_editable_state(work_dir, work_blend)
+                _write_editable_state(work_dir, work_blend, durable_blend)
                 return adapter, exe, _refresh_frame_fields(cached, params)
             if cached is not None and cached.get("ok") and not ok_work:
                 _emit(on_event, "log", level="warn",
@@ -1441,8 +1516,8 @@ def _prepare_and_assemble(
         _emit(on_event, "log", level="warn",
               message=f"工程文件另存失败（不影响本次渲染）：{exc}")
 
-    # T-60：记录这次实际装配好的可编辑 work.blend（供下次检测手改）
-    _write_editable_state(work_dir, work_blend)
+    # T-60/T-64：记录这次实际装配好的可编辑 work + 输出目录 durable（基线）
+    _write_editable_state(work_dir, work_blend, durable_blend)
     return adapter, exe, report
 
 

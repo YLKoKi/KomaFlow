@@ -72,11 +72,12 @@ class UseEditedBlendTests(unittest.TestCase):
     def _edit(self):
         self.blend.write_bytes(b"BLENDER-EDITED" * 100)
 
-    def _run(self, spec=None):
+    def _run(self, spec=None, durable=None):
         return pipeline._use_edited_blend(
             self.work, self.blend, spec or self.spec, self.params,
             on_event=lambda event: self.events.append(event.get("message", ""))
-            if event.get("type") == "log" else None)
+            if event.get("type") == "log" else None,
+            durable_blend=durable)
 
     def test_unchanged_returns_none(self):
         self.assertIsNone(self._run())
@@ -90,7 +91,41 @@ class UseEditedBlendTests(unittest.TestCase):
         self.assertEqual(report["editable_blend"], str(self.blend))
         self.assertTrue(any("检测到手工修改" in m for m in self.events))
 
-    def test_card_change_warns_but_still_uses_edited_file(self):
+    def test_frame_or_resolution_change_does_not_warn_card_change(self):
+        self._edit()
+        changed = dict(self.spec, frame_start=100, frame_end=200,
+                       width=1920, height=1080)
+        report = self._run(changed)
+        self.assertIsNotNone(report)
+        self.assertFalse(any("卡片改动未应用" in m for m in self.events),
+                         "只改渲染区间/分辨率不算卡片变化")
+
+    def test_use_does_not_refresh_baseline_and_keeps_working_next_rounds(self):
+        self._edit()
+        state_file = self.work / pipeline.EDITABLE_STATE_NAME
+        before = state_file.read_bytes()
+        first = self._run()
+        self.assertIsNotNone(first)
+        self.assertEqual(state_file.read_bytes(), before,
+                         "用编辑版渲染后不能刷新基线，否则下一轮会被当基线")
+        self.assertEqual(pipeline._detect_editable_change(
+            self.work, self.blend)["status"], "edited")
+        second = self._run()
+        self.assertIsNotNone(second)
+        self.assertTrue(second["user_edited"])
+
+    def test_edited_durable_in_output_dir_is_detected_and_used(self):
+        durable = self.work / "output" / "demo.blend"
+        durable.parent.mkdir()
+        durable.write_bytes(b"BLENDER" * 100)
+        pipeline._write_editable_state(self.work, self.blend, durable)
+        durable.write_bytes(b"DURABLE-EDITED" * 100)
+        change = pipeline._detect_editable_change(self.work, self.blend, durable)
+        self.assertEqual(change["status"], "edited")
+        self.assertEqual(change["which"], "durable")
+        report = self._run(durable=durable)
+        self.assertEqual(report["work_blend"], str(durable))
+        self.assertTrue(report["user_edited"])
         self._edit()
         changed = dict(self.spec, model="b.pmx")
         report = self._run(changed)
