@@ -24,7 +24,7 @@
 ### 证据
 
 - 单元测试：`Ran 455 tests — OK (skipped=3)`，0 fail / 0 error（2026-11-04 实跑，命令见 README）。
-- 待发布包：`KomaFlow_V1.2.3.zip`（体积与 SHA256 出包后见 Release 说明）。
+- 发布包已出：`KomaFlow_V1.2.3.zip`，**12,917,448 B / 1060 条目**（SHA256 见 Release 说明）。
 
 ## V1.2.2 — 2026-11-02
 

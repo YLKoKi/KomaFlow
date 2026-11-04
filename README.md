@@ -6,7 +6,7 @@
 > **直接下载（Windows 程序包）** → <https://github.com/YLKoKi/KomaFlow/releases/latest>
 >
 > ⚠️ 请不要用绿色的 `Code → Download ZIP`：那是**源码**，里面没有 exe。
-> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.3.zip`，**约 12.3 MB（体积以 Releases 页面为准）**）。
+> 程序包在 **Releases** 页面的 Assets 里（`KomaFlow_V1.2.3.zip`，**约 12.3 MB（12,917,448 字节）**）。
 
 
 > English: [README.en.md](README.en.md)
